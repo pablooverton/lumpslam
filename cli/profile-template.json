@@ -1,0 +1,53 @@
+{
+  "_comment": "Lumpsum profile template. Copy this file, rename it (e.g. my-profile.json), fill in your numbers.",
+
+  "client": {
+    "name": "Mike",
+    "age": 59,
+    "lifeExpectancy": 90,
+    "fullRetirementAge": 67,
+    "fraMonthlyBenefit": 3200,
+    "socialSecurityClaimAge": 68
+  },
+
+  "spouse": {
+    "name": "Laura",
+    "age": 61,
+    "lifeExpectancy": 95,
+    "fullRetirementAge": 67,
+    "fraMonthlyBenefit": 2800,
+    "socialSecurityClaimAge": 68
+  },
+
+  "state": "TX",
+  "currentYear": 2026,
+  "retirementYear": 2026,
+
+  "accounts": [
+    { "label": "Mike's IRA",      "owner": "client", "type": "pretax_ira",   "balance": 800000 },
+    { "label": "Laura's IRA",     "owner": "spouse", "type": "pretax_ira",   "balance": 900000 },
+    { "label": "Joint Brokerage", "owner": "joint",  "type": "brokerage",    "balance": 250000, "costBasis": 175000 },
+    { "label": "Inherited IRA",   "owner": "client", "type": "inherited_ira","balance": 100000, "inheritedYearsRemaining": 8 }
+  ],
+
+  "homeEquity": 600000,
+
+  "spending": {
+    "essential": 126000,
+    "lifestyleActive": 25000,
+    "lifestyleSlower": 12000,
+    "lifestyleTaperAge": 75,
+    "charitable": 10000,
+    "lumpyExpenses": [
+      { "year": 2027, "label": "Son's wedding",   "amount": 25000 },
+      { "year": 2030, "label": "Roof replacement", "amount": 18000 }
+    ],
+    "inflationRate": 3
+  },
+
+  "guardrails": {
+    "upperGrowthPct": 0.20,
+    "lowerDropPct": 0.29,
+    "lowerCutPct": 0.03
+  }
+}

@@ -39,3 +39,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# large media files — keep locally, don't push to GitHub
+*.webm
+*.mp4
+*.mov
+*.webm
+inspiration/
