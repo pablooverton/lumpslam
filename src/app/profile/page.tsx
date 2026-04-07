@@ -71,9 +71,15 @@ interface FormState {
   hasStateIncomeTax: boolean;
   currentYear: number;
   retirementYearDesired: number;
+  cobraMonths: number;               // 0 = skip COBRA, go straight to ACA
+  acaHouseholdSize: number;          // people on ACA plan; determines subsidy cliff
+  annualGrowthRatePct: number;       // nominal portfolio growth rate, as percentage (e.g. 7)
+  retirementLocation: 'us' | 'international';
+  targetAnnualConversion: number;    // 0 = surplus-driven (default)
   accounts: Account[];
   homeEquity: number;
-  essentialAnnualSpending: number;   // maps to baseAnnualSpending
+  essentialAnnualSpending: number;   // maps to baseAnnualSpending (exclude healthcare if using HSA)
+  annualHealthcareCost: number;      // 0 = included in essential; >0 = drawn from HSA first
   lifestyleSpendingActive: number;   // maps to travelBudgetEarly
   lifestyleSpendingSlower: number;   // maps to travelBudgetLate
   lifestyleTaperAge: number;         // maps to travelTaperStartAge
@@ -109,9 +115,15 @@ function buildFormState(
     hasStateIncomeTax: profile?.hasStateIncomeTax ?? true,
     currentYear: profile?.currentYear ?? new Date().getFullYear(),
     retirementYearDesired: profile?.retirementYearDesired ?? new Date().getFullYear() + 5,
+    cobraMonths: profile?.cobraMonths ?? 18,
+    acaHouseholdSize: profile?.acaHouseholdSize ?? 2,
+    annualGrowthRatePct: ((profile?.annualGrowthRate ?? 0.07) * 100),
+    retirementLocation: profile?.retirementLocation ?? 'us',
+    targetAnnualConversion: profile?.targetAnnualConversion ?? 0,
     accounts: accounts.length > 0 ? accounts : [{ id: '1', label: '', owner: 'client', type: 'pretax_ira', currentBalance: 0 }],
     homeEquity,
     essentialAnnualSpending: spending?.baseAnnualSpending ?? 0,
+    annualHealthcareCost: spending?.annualHealthcareCost ?? 0,
     lifestyleSpendingActive: spending?.travelBudgetEarly ?? 0,
     lifestyleSpendingSlower: spending?.travelBudgetLate ?? 0,
     lifestyleTaperAge: spending?.travelTaperStartAge ?? 75,
@@ -217,7 +229,13 @@ export default function ProfilePage() {
       hasStateIncomeTax: form.hasStateIncomeTax,
       currentYear: form.currentYear,
       retirementYearDesired: form.retirementYearDesired,
-      cobraMonths: 18, // standard federal COBRA period; not user-configurable
+      cobraMonths: form.cobraMonths,
+      acaHouseholdSize: form.acaHouseholdSize,
+      annualGrowthRate: form.annualGrowthRatePct / 100,
+      retirementLocation: form.retirementLocation,
+      ...(form.targetAnnualConversion > 0 && {
+        targetAnnualConversion: form.targetAnnualConversion,
+      }),
     };
 
     const spendingProfile: SpendingProfile = {
@@ -232,6 +250,9 @@ export default function ProfilePage() {
         mortgageAnnualPayment: form.mortgageAnnualPayment,
         mortgagePaidOffAge: form.mortgagePaidOffAge,
       }),
+      ...(form.annualHealthcareCost > 0 && {
+        annualHealthcareCost: form.annualHealthcareCost,
+      }),
     };
 
     setProfile(clientProfile);
@@ -243,8 +264,8 @@ export default function ProfilePage() {
   }
 
   const totalLiquid = form.accounts.reduce((s, a) => s + (a.currentBalance || 0), 0);
-  const totalEarlySpend = form.essentialAnnualSpending + form.lifestyleSpendingActive + form.charitableGivingAnnual + form.mortgageAnnualPayment;
-  const totalLaterSpend = form.essentialAnnualSpending + form.lifestyleSpendingSlower + form.charitableGivingAnnual;
+  const totalEarlySpend = form.essentialAnnualSpending + form.annualHealthcareCost + form.lifestyleSpendingActive + form.charitableGivingAnnual + form.mortgageAnnualPayment;
+  const totalLaterSpend = form.essentialAnnualSpending + form.annualHealthcareCost + form.lifestyleSpendingSlower + form.charitableGivingAnnual;
   const selectedStateInfo = getStateInfo(form.stateAbbreviation);
 
   return (
@@ -343,6 +364,99 @@ export default function ProfilePage() {
           </div>
         </Section>
 
+        {/* ── Simulation Settings ── */}
+        <Section title="Simulation Settings">
+          <div className="px-4 py-4 space-y-5">
+
+            {/* Retirement location */}
+            <div>
+              <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-2">Retirement Location</p>
+              <div className="flex gap-3">
+                {(['us', 'international'] as const).map((loc) => (
+                  <button
+                    key={loc}
+                    type="button"
+                    onClick={() => set('retirementLocation', loc)}
+                    className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
+                      form.retirementLocation === loc
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-800 border border-gray-700 text-gray-400 hover:text-gray-200'
+                    }`}
+                  >
+                    {loc === 'us' ? 'US' : 'International'}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
+                {form.retirementLocation === 'international'
+                  ? 'ACA season is skipped. Pre-Medicare years use free-spending mechanics (no MAGI cliff). Include international healthcare in Essential Expenses.'
+                  : 'Standard US path: COBRA → ACA → Medicare → RMD.'}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-x-6 gap-y-4">
+              {/* Portfolio growth rate */}
+              <Field label="Annual Portfolio Growth Rate">
+                <div className="relative w-full">
+                  <NumericInput
+                    value={parseFloat(form.annualGrowthRatePct.toFixed(1))}
+                    onChange={(v) => set('annualGrowthRatePct', v)}
+                    min={1}
+                    max={15}
+                    className={inputClass + ' pr-7'}
+                  />
+                  <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 text-sm pointer-events-none">%</span>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Nominal rate. Real returns: subtract ~3% inflation (e.g. 7% real ≈ 10% nominal).
+                </p>
+              </Field>
+
+              {/* COBRA months (US only) */}
+              {form.retirementLocation === 'us' && (
+                <Field label="COBRA / Employer Coverage (months)">
+                  <NumericInput
+                    value={form.cobraMonths}
+                    onChange={(v) => set('cobraMonths', v)}
+                    min={0}
+                    max={18}
+                    className={inputClass}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">0 = skip COBRA, go straight to ACA. Max 18 months.</p>
+                </Field>
+              )}
+
+              {/* ACA household size (US only, COBRA months > 0 or after COBRA) */}
+              {form.retirementLocation === 'us' && (
+                <Field label="ACA Household Size">
+                  <NumericInput
+                    value={form.acaHouseholdSize}
+                    onChange={(v) => set('acaHouseholdSize', v)}
+                    min={1}
+                    max={8}
+                    className={inputClass}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    People on your ACA plan. Affects subsidy cliff: 2 = $84,600 · 3 = $106,120 · 4 = $127,640
+                  </p>
+                </Field>
+              )}
+
+              {/* Target Roth conversion */}
+              <Field label="Target Annual Roth Conversion (optional)">
+                <CurrencyInput
+                  value={form.targetAnnualConversion}
+                  onChange={(v) => set('targetAnnualConversion', v)}
+                  placeholder="0"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  If set, drives Roth conversion by target (e.g. $242k) rather than surplus. Leave at $0 for automatic surplus-based conversions.
+                </p>
+              </Field>
+            </div>
+          </div>
+        </Section>
+
         {/* ── Assets ── */}
         <Section title="Accounts & Assets">
           <div className="px-4 py-4 space-y-3">
@@ -400,6 +514,24 @@ export default function ProfilePage() {
               </Field>
               <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
                 Fixed costs that don't change with your activity level: property taxes, homeowners/auto insurance, utilities, groceries, base transportation, Medicare premiums, regular prescriptions.
+                {form.annualHealthcareCost > 0 && (
+                  <span className="text-yellow-600"> Do not include healthcare costs here — they are entered separately below and drawn from HSA first.</span>
+                )}
+              </p>
+            </div>
+
+            {/* Healthcare / HSA */}
+            <div className="border-t border-gray-700 pt-4">
+              <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-3">Healthcare Cost (HSA Routing — optional)</p>
+              <Field label="Annual Healthcare Cost">
+                <CurrencyInput
+                  value={form.annualHealthcareCost}
+                  onChange={(v) => set('annualHealthcareCost', v)}
+                  placeholder="0"
+                />
+              </Field>
+              <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
+                If you have an HSA account, enter your annual healthcare cost here (ACA premiums, Medicare Part B/D, Medigap). This amount will be drawn from your HSA balance first each year. If HSA is exhausted, the remainder is added to spending. Leave at $0 to include healthcare in Essential Expenses instead.
               </p>
             </div>
 
@@ -707,6 +839,7 @@ function AccountRow({
           <option value="roth_ira">Roth IRA</option>
           <option value="brokerage">Brokerage</option>
           <option value="inherited_ira">Inherited IRA</option>
+          <option value="hsa">HSA</option>
         </select>
 
         <CurrencyInput value={account.currentBalance} onChange={(v) => onChange({ currentBalance: v })} />

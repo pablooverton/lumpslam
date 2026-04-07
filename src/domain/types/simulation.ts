@@ -27,8 +27,9 @@ export interface TaxLiability {
 export interface RothConversionEvent {
   conversionAmount: number;
   marginalRate: number;
-  taxOnConversion: number;        // Event 2 — paid from brokerage
-  brokerageFundingAmount: number; // brokerage drawn to cover this tax
+  taxOnConversion: number;        // Event 2 — paid from brokerage or Roth
+  brokerageFundingAmount: number; // brokerage drawn to cover tax (0 when no brokerage)
+  rothFundingAmount: number;      // Roth drawn to cover tax when brokerage is insufficient
 }
 
 export interface YearlyProjection {

@@ -16,5 +16,10 @@ export interface ClientProfile {
   hasStateIncomeTax: boolean;
   currentYear: number;
   retirementYearDesired: number | null; // null = retire now
-  cobraMonths: number; // typically 12–18
+  cobraMonths: number;                  // 0 = skip COBRA, go straight to ACA/bridge
+  acaHouseholdSize?: number;            // people on ACA plan; determines subsidy cliff. Default: 2
+  annualGrowthRate?: number;            // nominal portfolio growth rate. Default: 0.07
+  retirementLocation?: 'us' | 'international'; // 'international' skips ACA season. Default: 'us'
+  targetAnnualConversion?: number;      // if set, drives Roth conversion amount (e.g. 242_000)
+                                        // instead of surplus-based calculation
 }

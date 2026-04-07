@@ -1,6 +1,6 @@
 import type { ClientProfile } from '../types/profile';
 import type { RetirementSeason } from '../types/simulation';
-import { ACA_MAGI_CLIFF_2025, ACA_ESTIMATED_ANNUAL_SAVINGS_COUPLE } from '../constants/aca-thresholds';
+import { getAcaCliff, ACA_ESTIMATED_ANNUAL_SAVINGS_COUPLE } from '../constants/aca-thresholds';
 import { IRMAA_BRACKETS_2025 } from '../constants/tax-brackets';
 import { RMD_START_AGE } from '../constants/rmd-tables';
 
@@ -19,7 +19,16 @@ export function classifySeasonForYear(
     ? profile.client.age + (year - profile.currentYear)
     : profile.client.age;
 
-  if (year <= cobraEndYear) return 'cobra';
+  // International retirement: no ACA season. Pre-Medicare years use COBRA mechanics
+  // (no MAGI cliff, unrestricted withdrawals — appropriate for non-US healthcare).
+  if (profile.retirementLocation === 'international') {
+    if (clientAge < 65) return 'cobra';
+    if (clientAge < RMD_START_AGE) return 'medicare';
+    return 'rmd';
+  }
+
+  // US path: COBRA only applies when cobraMonths > 0
+  if (profile.cobraMonths > 0 && year <= cobraEndYear) return 'cobra';
   if (clientAge < 65) return 'aca';
   if (clientAge < RMD_START_AGE) return 'medicare';
   return 'rmd';
@@ -53,7 +62,7 @@ export interface AcaEligibilityResult {
 }
 
 export function assessAcaEligibility(magi: number, householdSize = 2): AcaEligibilityResult {
-  const cliff = ACA_MAGI_CLIFF_2025;
+  const cliff = getAcaCliff(householdSize);
   const headroom = cliff - magi;
   const eligible = magi < cliff;
   return {

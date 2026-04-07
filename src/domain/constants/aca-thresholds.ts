@@ -14,3 +14,14 @@ export const ACA_MAGI_CLIFF_2025 = 84_600;
 
 // Estimated premium savings for a couple qualifying for ACA subsidies (benchmark plan)
 export const ACA_ESTIMATED_ANNUAL_SAVINGS_COUPLE = 17_500; // midpoint of $15k-$20k range
+
+/**
+ * Returns the ACA subsidy cliff (400% FPL) for the given household size.
+ * Base: $84,600 for a 2-person household (2025 published figure).
+ * Each additional person adds ~$21,520 (400% × $5,380 per-person FPL increment).
+ */
+export function getAcaCliff(householdSize: number): number {
+  const size = Math.max(1, Math.round(householdSize));
+  if (size <= 2) return ACA_MAGI_CLIFF_2025;
+  return ACA_MAGI_CLIFF_2025 + (size - 2) * (ACA_FPL_2025.perAdditionalPerson * 4);
+}

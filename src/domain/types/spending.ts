@@ -18,4 +18,9 @@ export interface SpendingProfile {
   // Set mortgageAnnualPayment to 0 (or omit) if no mortgage at retirement.
   mortgageAnnualPayment?: number;   // e.g. 48_800 for $48.8k/yr P&I
   mortgagePaidOffAge?: number;      // client age when last payment is made (e.g. 69)
+
+  // HSA healthcare routing — if set, this amount is drawn from HSA first before
+  // hitting the spending pool. Do NOT include this cost in baseAnnualSpending.
+  // Covers ACA premiums, Medicare Part B/D/Medigap, etc.
+  annualHealthcareCost?: number;    // e.g. 40_000 for ACA premiums
 }

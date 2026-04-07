@@ -2,7 +2,8 @@ export type AccountType =
   | 'pretax_ira'
   | 'roth_ira'
   | 'brokerage'
-  | 'inherited_ira';
+  | 'inherited_ira'
+  | 'hsa';
 
 export interface Account {
   id: string;
@@ -23,7 +24,8 @@ export interface AssetSnapshot {
   totalRoth: number;
   totalBrokerage: number;
   totalInheritedIra: number;
-  totalLiquid: number;
+  totalHsa: number;
+  totalLiquid: number; // includes HSA
 }
 
 export function deriveAssetTotals(accounts: Account[], homeEquity: number): AssetSnapshot {
@@ -39,6 +41,9 @@ export function deriveAssetTotals(accounts: Account[], homeEquity: number): Asse
   const totalInheritedIra = accounts
     .filter((a) => a.type === 'inherited_ira')
     .reduce((sum, a) => sum + a.currentBalance, 0);
-  const totalLiquid = totalPretax + totalRoth + totalBrokerage + totalInheritedIra;
-  return { accounts, homeEquity, totalPretax, totalRoth, totalBrokerage, totalInheritedIra, totalLiquid };
+  const totalHsa = accounts
+    .filter((a) => a.type === 'hsa')
+    .reduce((sum, a) => sum + a.currentBalance, 0);
+  const totalLiquid = totalPretax + totalRoth + totalBrokerage + totalInheritedIra + totalHsa;
+  return { accounts, homeEquity, totalPretax, totalRoth, totalBrokerage, totalInheritedIra, totalHsa, totalLiquid };
 }
