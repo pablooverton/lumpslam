@@ -71,12 +71,10 @@ interface FormState {
   hasStateIncomeTax: boolean;
   currentYear: number;
   retirementYearDesired: number;
-  cobraMonths: number;               // 0 = skip COBRA, go straight to ACA
-  acaHouseholdSize: number;          // people on ACA plan; determines subsidy cliff
-  annualGrowthRatePct: number;       // nominal portfolio growth rate, as percentage (e.g. 7)
-  retirementLocation: 'us' | 'international';
-  targetAnnualConversion: number;    // 0 = surplus-driven (default)
-  spendingEngine: 'withdrawal_sequencing' | 'conversion_primary' | 'auto';
+  retireOutsideUS: boolean;
+  healthBridge: 'cobra' | 'aca' | 'spouse_employer';  // US only
+  dependentsOnPlan: number;          // children/other dependents (not client or spouse) on health plan
+  growthScenario: 'conservative' | 'moderate' | 'optimistic';
   accounts: Account[];
   homeEquity: number;
   essentialAnnualSpending: number;   // maps to baseAnnualSpending (exclude healthcare if using HSA)
@@ -116,12 +114,13 @@ function buildFormState(
     hasStateIncomeTax: profile?.hasStateIncomeTax ?? true,
     currentYear: profile?.currentYear ?? new Date().getFullYear(),
     retirementYearDesired: profile?.retirementYearDesired ?? new Date().getFullYear() + 5,
-    cobraMonths: profile?.cobraMonths ?? 18,
-    acaHouseholdSize: profile?.acaHouseholdSize ?? 2,
-    annualGrowthRatePct: ((profile?.annualGrowthRate ?? 0.07) * 100),
-    retirementLocation: profile?.retirementLocation ?? 'us',
-    targetAnnualConversion: profile?.targetAnnualConversion ?? 0,
-    spendingEngine: profile?.spendingEngine ?? 'auto',
+    retireOutsideUS: profile?.retirementLocation === 'international',
+    healthBridge: (profile?.cobraMonths ?? 0) > 0 ? 'cobra' : 'aca',
+    dependentsOnPlan: Math.max(0, (profile?.acaHouseholdSize ?? 2) - 1 - (profile?.spouse ? 1 : 0)),
+    growthScenario: (() => {
+      const r = profile?.annualGrowthRate ?? 0.07;
+      return r >= 0.085 ? 'optimistic' : r <= 0.06 ? 'conservative' : 'moderate';
+    })(),
     accounts: accounts.length > 0 ? accounts : [{ id: '1', label: '', owner: 'client', type: 'pretax_ira', currentBalance: 0 }],
     homeEquity,
     essentialAnnualSpending: spending?.baseAnnualSpending ?? 0,
@@ -223,6 +222,16 @@ export default function ProfilePage() {
   }
 
   function handleSubmit() {
+    // Derive expert settings from simple answers
+    const retirementLocation: 'us' | 'international' = form.retireOutsideUS ? 'international' : 'us';
+    const cobraMonths = form.retireOutsideUS ? 0 : form.healthBridge === 'cobra' ? 18 : 0;
+    // ACA household = client + spouse (if present) + dependents
+    const acaHouseholdSize = 1 + (form.hasSpouse ? 1 : 0) + form.dependentsOnPlan;
+    const annualGrowthRate =
+      form.growthScenario === 'conservative' ? 0.05
+      : form.growthScenario === 'optimistic' ? 0.09
+      : 0.07;
+
     const clientProfile: ClientProfile = {
       client: form.client,
       spouse: form.hasSpouse ? form.spouse : null,
@@ -231,16 +240,10 @@ export default function ProfilePage() {
       hasStateIncomeTax: form.hasStateIncomeTax,
       currentYear: form.currentYear,
       retirementYearDesired: form.retirementYearDesired,
-      cobraMonths: form.cobraMonths,
-      acaHouseholdSize: form.acaHouseholdSize,
-      annualGrowthRate: form.annualGrowthRatePct / 100,
-      retirementLocation: form.retirementLocation,
-      ...(form.targetAnnualConversion > 0 && {
-        targetAnnualConversion: form.targetAnnualConversion,
-      }),
-      ...(form.spendingEngine !== 'auto' && {
-        spendingEngine: form.spendingEngine,
-      }),
+      cobraMonths,
+      acaHouseholdSize,
+      annualGrowthRate,
+      retirementLocation,
     };
 
     const spendingProfile: SpendingProfile = {
@@ -369,123 +372,103 @@ export default function ProfilePage() {
           </div>
         </Section>
 
-        {/* ── Simulation Settings ── */}
-        <Section title="Simulation Settings">
+        {/* ── Coverage & Healthcare Bridge ── */}
+        <Section title="Coverage &amp; Healthcare Bridge">
           <div className="px-4 py-4 space-y-5">
 
-            {/* Retirement location */}
+            {/* Where will you retire */}
             <div>
-              <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-2">Retirement Location</p>
+              <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-2">Where will you retire?</p>
               <div className="flex gap-3">
-                {(['us', 'international'] as const).map((loc) => (
+                {([
+                  { value: false, label: 'In the US' },
+                  { value: true,  label: 'Outside the US' },
+                ] as const).map(({ value, label }) => (
                   <button
-                    key={loc}
+                    key={String(value)}
                     type="button"
-                    onClick={() => set('retirementLocation', loc)}
+                    onClick={() => set('retireOutsideUS', value)}
                     className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
-                      form.retirementLocation === loc
+                      form.retireOutsideUS === value
                         ? 'bg-blue-600 text-white'
                         : 'bg-gray-800 border border-gray-700 text-gray-400 hover:text-gray-200'
                     }`}
                   >
-                    {loc === 'us' ? 'US' : 'International'}
+                    {label}
                   </button>
                 ))}
               </div>
-              <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
-                {form.retirementLocation === 'international'
-                  ? 'ACA season is skipped. Pre-Medicare years use free-spending mechanics (no MAGI cliff). Include international healthcare in Essential Expenses.'
-                  : 'Standard US path: COBRA → ACA → Medicare → RMD.'}
-              </p>
+              {form.retireOutsideUS && (
+                <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
+                  ACA subsidies don&apos;t apply. Pre-Medicare years have no income cliff — Roth conversions can be maximized freely. Include international health insurance in Essential Expenses.
+                </p>
+              )}
             </div>
 
-            <div className="grid grid-cols-2 gap-x-6 gap-y-4">
-              {/* Portfolio growth rate */}
-              <Field label="Annual Portfolio Growth Rate">
-                <div className="relative w-full">
-                  <NumericInput
-                    value={parseFloat(form.annualGrowthRatePct.toFixed(1))}
-                    onChange={(v) => set('annualGrowthRatePct', v)}
-                    min={1}
-                    max={15}
-                    className={inputClass + ' pr-7'}
-                  />
-                  <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 text-sm pointer-events-none">%</span>
+            {/* US: how will you bridge to Medicare */}
+            {!form.retireOutsideUS && (
+              <div>
+                <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-2">How will you get health coverage before Medicare?</p>
+                <div className="flex flex-col gap-2">
+                  {([
+                    { value: 'cobra',           label: 'COBRA — 18 months',         desc: 'Continue your employer\'s plan. You pay the full premium for up to 18 months, then move to ACA.' },
+                    { value: 'aca',             label: 'ACA Marketplace',            desc: 'Enroll directly in a marketplace plan at retirement. Subsidies available if income stays below the eligibility threshold.' },
+                    { value: 'spouse_employer', label: 'Spouse\'s employer',         desc: 'Covered under your spouse\'s employer plan until Medicare. No ACA enrollment needed.' },
+                  ] as const).map(({ value, label, desc }) => (
+                    <label
+                      key={value}
+                      className={`flex items-start gap-3 p-3 rounded border cursor-pointer transition-colors ${
+                        form.healthBridge === value
+                          ? 'border-blue-600 bg-blue-950'
+                          : 'border-gray-700 bg-gray-800 hover:border-gray-600'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="healthBridge"
+                        checked={form.healthBridge === value}
+                        onChange={() => set('healthBridge', value)}
+                        className="mt-0.5 accent-blue-500 shrink-0"
+                      />
+                      <div>
+                        <p className="text-sm text-white font-medium">{label}</p>
+                        <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">{desc}</p>
+                      </div>
+                    </label>
+                  ))}
                 </div>
-                <p className="text-xs text-gray-500 mt-1">
-                  Nominal rate. Real returns: subtract ~3% inflation (e.g. 7% real ≈ 10% nominal).
+              </div>
+            )}
+
+            {/* US: dependents on plan */}
+            {!form.retireOutsideUS && form.healthBridge !== 'spouse_employer' && (
+              <div>
+                <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-1.5">
+                  Children or other dependents on your health plan in early retirement?
                 </p>
-              </Field>
-
-              {/* COBRA months (US only) */}
-              {form.retirementLocation === 'us' && (
-                <Field label="COBRA / Employer Coverage (months)">
-                  <NumericInput
-                    value={form.cobraMonths}
-                    onChange={(v) => set('cobraMonths', v)}
-                    min={0}
-                    max={18}
-                    className={inputClass}
-                  />
-                  <p className="text-xs text-gray-500 mt-1">0 = skip COBRA, go straight to ACA. Max 18 months.</p>
-                </Field>
-              )}
-
-              {/* ACA household size (US only, COBRA months > 0 or after COBRA) */}
-              {form.retirementLocation === 'us' && (
-                <Field label="ACA Household Size">
-                  <NumericInput
-                    value={form.acaHouseholdSize}
-                    onChange={(v) => set('acaHouseholdSize', v)}
-                    min={1}
-                    max={8}
-                    className={inputClass}
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    People on your ACA plan. Affects subsidy cliff: 2 = $84,600 · 3 = $106,120 · 4 = $127,640
-                  </p>
-                </Field>
-              )}
-
-              {/* Target Roth conversion */}
-              <Field label="Target Annual Roth Conversion (optional)">
-                <CurrencyInput
-                  value={form.targetAnnualConversion}
-                  onChange={(v) => set('targetAnnualConversion', v)}
-                  placeholder="0"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  If set, drives Roth conversion by target (e.g. $242k) rather than surplus. Leave at $0 for automatic surplus-based conversions.
-                </p>
-              </Field>
-
-              {/* Spending engine */}
-              <Field label="Spending Engine">
                 <div className="flex gap-2">
-                  {(['auto', 'withdrawal_sequencing', 'conversion_primary'] as const).map((eng) => (
+                  {[0, 1, 2, 3, 4].map((n) => (
                     <button
-                      key={eng}
+                      key={n}
                       type="button"
-                      onClick={() => set('spendingEngine', eng)}
-                      className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                        form.spendingEngine === eng
+                      onClick={() => set('dependentsOnPlan', n)}
+                      className={`w-10 h-9 rounded text-sm font-medium transition-colors ${
+                        form.dependentsOnPlan === n
                           ? 'bg-blue-600 text-white'
                           : 'bg-gray-800 border border-gray-700 text-gray-400 hover:text-gray-200'
                       }`}
                     >
-                      {eng === 'auto' ? 'Auto' : eng === 'withdrawal_sequencing' ? 'Withdrawal-First' : 'Conversion-First'}
+                      {n === 4 ? '4+' : n}
                     </button>
                   ))}
                 </div>
                 <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
-                  {form.spendingEngine === 'conversion_primary'
-                    ? 'Conversion-First: convert target amount from pre-tax each year; Roth covers taxes + spending. Best for high pre-tax balance, no-brokerage strategies.'
-                    : form.spendingEngine === 'withdrawal_sequencing'
-                      ? 'Withdrawal-First: draw from accounts to meet spending, convert surplus bracket capacity to Roth. Best for brokerage-backed strategies.'
-                      : 'Auto: picks Conversion-First when a target conversion is set; otherwise Withdrawal-First.'}
+                  Children under 26 can stay on your plan.{form.hasSpouse ? ' Your spouse is already counted.' : ''}{' '}
+                  This determines your ACA subsidy eligibility threshold.
                 </p>
-              </Field>
-            </div>
+              </div>
+            )}
+
           </div>
         </Section>
 
@@ -725,6 +708,43 @@ export default function ProfilePage() {
             </Field>
           </div>
         </Section>
+
+        {/* ── Advanced ── */}
+        <details className="rounded-lg border border-gray-700 bg-gray-900 overflow-hidden">
+          <summary className="px-4 py-3 bg-gray-800 text-sm font-semibold text-gray-400 cursor-pointer hover:text-white transition-colors list-none flex items-center justify-between select-none">
+            <span>Advanced Settings</span>
+            <span className="text-xs font-normal">Market scenario, growth rate</span>
+          </summary>
+          <div className="px-4 py-4 space-y-4">
+            <div>
+              <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-2">Market Scenario</p>
+              <div className="flex gap-3">
+                {([
+                  { value: 'conservative', label: 'Conservative', sub: '5% / year' },
+                  { value: 'moderate',     label: 'Moderate',     sub: '7% / year' },
+                  { value: 'optimistic',   label: 'Optimistic',   sub: '9% / year' },
+                ] as const).map(({ value, label, sub }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => set('growthScenario', value)}
+                    className={`flex-1 px-3 py-2.5 rounded border text-sm font-medium transition-colors text-center ${
+                      form.growthScenario === value
+                        ? 'bg-blue-600 border-blue-500 text-white'
+                        : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200'
+                    }`}
+                  >
+                    <div>{label}</div>
+                    <div className="text-xs font-normal opacity-70 mt-0.5">{sub}</div>
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
+                Nominal annual portfolio return assumption. Moderate (7%) is a historically reasonable long-term baseline for a diversified stock/bond portfolio.
+              </p>
+            </div>
+          </div>
+        </details>
 
         {/* ── Submit ── */}
         <button
