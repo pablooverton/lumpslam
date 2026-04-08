@@ -7,35 +7,42 @@ import { runSimulation } from '@/domain/engine/simulation-runner';
 import { formatCurrency, formatPercent } from '@/lib/format';
 import Link from 'next/link';
 
-const RANGE = 11; // currentYear through currentYear+10
+const BAR_MAX_PX = 72;
+const BAR_MIN_PX = 8;
 
 export default function ScenariosPage() {
   const { profile, assets, spending, guardrails } = useProfileStore();
   const { isStale, isRunning, runSimulations } = useSimulationStore();
 
-  // Pre-compute all years across the slider range
+  // Pre-compute simulations for target ± 5 years, clamped to [currentYear, lifeExpYear - 5]
   const yearData = useMemo(() => {
     if (!profile || !assets || !spending) return [];
-    return Array.from({ length: RANGE }, (_, i) => {
-      const year = profile.currentYear + i;
+
+    const target    = profile.retirementYearDesired ?? profile.currentYear;
+    const lifeExpYr = profile.currentYear + (profile.client.lifeExpectancy - profile.client.age);
+    const minYear   = profile.currentYear;
+    const maxYear   = Math.min(target + 5, lifeExpYr - 5);
+    const safeMax   = Math.max(minYear + 1, maxYear); // always at least 2 years
+
+    const results = [];
+    for (let year = minYear; year <= safeMax; year++) {
       const tweaked = { ...profile, retirementYearDesired: year };
-      const result = runSimulation(tweaked, assets, spending, guardrails, 'retire_at_stated_date');
-      return { year, result };
-    });
+      const result  = runSimulation(tweaked, assets, spending, guardrails, 'retire_at_stated_date');
+      results.push({ year, result });
+    }
+    return results;
   }, [profile, assets, spending, guardrails]);
 
-  // Default to the profile's stated target year
+  // Default slider index = position of profile's target year in the data
   const defaultIndex = useMemo(() => {
     if (!profile || yearData.length === 0) return 0;
-    const offset = (profile.retirementYearDesired ?? profile.currentYear) - profile.currentYear;
-    return Math.max(0, Math.min(offset, RANGE - 1));
-  }, [profile, yearData.length]);
+    const target = profile.retirementYearDesired ?? profile.currentYear;
+    const idx = yearData.findIndex((d) => d.year === target);
+    return idx >= 0 ? idx : 0;
+  }, [profile, yearData]);
 
   const [selectedIndex, setSelectedIndex] = useState(defaultIndex);
-
-  useEffect(() => {
-    setSelectedIndex(defaultIndex);
-  }, [defaultIndex]);
+  useEffect(() => { setSelectedIndex(defaultIndex); }, [defaultIndex]);
 
   if (!profile || !assets || !spending) {
     return (
@@ -48,21 +55,22 @@ export default function ScenariosPage() {
     );
   }
 
-  const selected = yearData[selectedIndex];
-  const baseline = yearData[0];
-  if (!selected || !baseline) return null;
+  if (yearData.length === 0) return null;
 
-  const targetYear  = profile.retirementYearDesired ?? profile.currentYear;
-  const fraYear     = profile.currentYear + (profile.client.fullRetirementAge - profile.client.age);
+  const selected  = yearData[selectedIndex];
+  const baseline  = yearData[0];
+  const targetYear = profile.retirementYearDesired ?? profile.currentYear;
+  const fraYear    = profile.currentYear + (profile.client.fullRetirementAge - profile.client.age);
+
   const clientAgeAt = (year: number) => profile.client.age + (year - profile.currentYear);
 
-  const maxCapacity = Math.max(...yearData.map((d) => d.result.spendingCapacity));
-  const minCapacity = Math.min(...yearData.map((d) => d.result.spendingCapacity));
-  const capacityRange = maxCapacity - minCapacity || 1;
+  const maxCap = Math.max(...yearData.map((d) => d.result.spendingCapacity));
+  const minCap = Math.min(...yearData.map((d) => d.result.spendingCapacity));
+  const capRange = maxCap - minCap || 1;
 
-  const isPositive     = selected.result.surplusOrDeficit >= 0;
-  const yearsWorked    = selectedIndex;
   const capacityDelta  = selected.result.spendingCapacity - baseline.result.spendingCapacity;
+  const isPositive     = selected.result.surplusOrDeficit >= 0;
+  const yearsWorked    = selected.year - baseline.year;
 
   return (
     <div className="max-w-4xl">
@@ -77,72 +85,68 @@ export default function ScenariosPage() {
         </button>
       </div>
       <p className="text-sm text-gray-500 mb-8">
-        Drag the slider to see how each additional year of work changes your retirement picture.
+        Drag the slider to see how your retirement picture changes with each additional year of work.
       </p>
 
-      {/* ── Capacity bars + slider ── */}
-      <div className="mb-6">
+      {/* ── Bars ── absolute pixel heights so they always render */}
+      <div
+        className="flex items-end gap-1 mb-2"
+        style={{ height: `${BAR_MAX_PX + 4}px` }}
+      >
+        {yearData.map((d, i) => {
+          const t      = (d.result.spendingCapacity - minCap) / capRange;
+          const barH   = Math.round(BAR_MIN_PX + (BAR_MAX_PX - BAR_MIN_PX) * t);
+          const isSel  = i === selectedIndex;
+          const isTgt  = d.year === targetYear;
+          return (
+            <div
+              key={d.year}
+              role="button"
+              tabIndex={0}
+              onClick={() => setSelectedIndex(i)}
+              onKeyDown={(e) => e.key === 'Enter' && setSelectedIndex(i)}
+              className={`flex-1 rounded-t cursor-pointer transition-colors ${
+                isSel  ? 'bg-blue-500' :
+                isTgt  ? 'bg-blue-800 hover:bg-blue-700' :
+                         'bg-gray-700 hover:bg-gray-500'
+              }`}
+              style={{ height: `${barH}px` }}
+              title={`${d.year} · age ${clientAgeAt(d.year)}: ${formatCurrency(d.result.spendingCapacity)}/yr`}
+            />
+          );
+        })}
+      </div>
 
-        {/* Bars — height proportional with a 15% floor so small differences are visible */}
-        <div className="flex items-end gap-0.5 h-20 mb-2 px-0.5">
-          {yearData.map((d, i) => {
-            const normalised = 0.15 + 0.85 * ((d.result.spendingCapacity - minCapacity) / capacityRange);
-            const isSelected = i === selectedIndex;
-            const isTarget   = d.year === targetYear;
-            return (
-              <button
-                key={d.year}
-                type="button"
-                onClick={() => setSelectedIndex(i)}
-                className="flex-1 flex flex-col justify-end h-full group"
-                title={`${d.year} · age ${clientAgeAt(d.year)}: ${formatCurrency(d.result.spendingCapacity)}/yr`}
-              >
-                <div
-                  className={`w-full rounded-sm transition-colors ${
-                    isSelected
-                      ? 'bg-blue-500'
-                      : isTarget
-                      ? 'bg-blue-800 group-hover:bg-blue-700'
-                      : 'bg-gray-700 group-hover:bg-gray-500'
-                  }`}
-                  style={{ height: `${normalised * 100}%` }}
-                />
-              </button>
-            );
-          })}
-        </div>
+      {/* ── Slider ── */}
+      <input
+        type="range"
+        min={0}
+        max={yearData.length - 1}
+        value={selectedIndex}
+        onChange={(e) => setSelectedIndex(Number(e.target.value))}
+        className="w-full accent-blue-500 cursor-pointer mb-1"
+      />
 
-        {/* Range slider */}
-        <input
-          type="range"
-          min={0}
-          max={RANGE - 1}
-          value={selectedIndex}
-          onChange={(e) => setSelectedIndex(Number(e.target.value))}
-          className="w-full accent-blue-500 cursor-pointer"
-        />
-
-        {/* Year labels + anchors */}
-        <div className="flex mt-1.5">
-          {yearData.map((d, i) => {
-            const isSelected = i === selectedIndex;
-            const isNow      = d.year === profile.currentYear;
-            const isTarget   = d.year === targetYear && targetYear !== profile.currentYear;
-            const isFra      = d.year === fraYear && fraYear >= profile.currentYear && fraYear <= profile.currentYear + RANGE - 1;
-            return (
-              <div key={d.year} className="flex-1 flex flex-col items-center min-w-0">
-                <span className={`text-xs truncate ${isSelected ? 'text-white font-medium' : 'text-gray-600'}`}>
-                  {d.year}
-                </span>
-                <span className="text-xs mt-0.5 truncate">
-                  {isNow    && <span className="text-gray-500">Now</span>}
-                  {isTarget && <span className="text-blue-400">★</span>}
-                  {isFra    && <span className="text-green-600">FRA</span>}
-                </span>
-              </div>
-            );
-          })}
-        </div>
+      {/* ── Year labels ── */}
+      <div className="flex mb-8">
+        {yearData.map((d, i) => {
+          const isSel    = i === selectedIndex;
+          const isNow    = d.year === profile.currentYear;
+          const isTgt    = d.year === targetYear && targetYear !== profile.currentYear;
+          const isFra    = d.year === fraYear;
+          return (
+            <div key={d.year} className="flex-1 flex flex-col items-center min-w-0">
+              <span className={`text-xs ${isSel ? 'text-white font-semibold' : 'text-gray-600'}`}>
+                {d.year}
+              </span>
+              <span className="text-xs mt-0.5 leading-none">
+                {isNow && <span className="text-gray-500">Now</span>}
+                {isTgt && <span className="text-blue-400">★</span>}
+                {isFra && !isTgt && !isNow && <span className="text-green-600">FRA</span>}
+              </span>
+            </div>
+          );
+        })}
       </div>
 
       {/* ── Hero metrics ── */}
@@ -154,19 +158,22 @@ export default function ScenariosPage() {
             </h2>
             {profile.spouse && (
               <p className="text-sm text-gray-500 mt-0.5">
-                {profile.spouse.name} age {profile.spouse.age + yearsWorked}
+                {profile.spouse.name} · age {profile.spouse.age + yearsWorked}
               </p>
             )}
             {yearsWorked > 0 && (
               <p className="text-sm text-gray-500 mt-0.5">
-                {yearsWorked} more year{yearsWorked !== 1 ? 's' : ''} of work vs. retiring now
+                {yearsWorked} more year{yearsWorked !== 1 ? 's' : ''} vs. retiring now
               </p>
             )}
           </div>
 
-          {/* Delta badge */}
           {yearsWorked > 0 && (
-            <div className={`text-right px-3 py-2 rounded-lg ${capacityDelta >= 0 ? 'bg-green-950 border border-green-800' : 'bg-red-950 border border-red-800'}`}>
+            <div className={`text-right px-3 py-2 rounded-lg border ${
+              capacityDelta >= 0
+                ? 'bg-green-950 border-green-800'
+                : 'bg-red-950 border-red-800'
+            }`}>
               <p className="text-xs text-gray-400 mb-0.5">vs. retire now</p>
               <p className={`text-base font-bold ${capacityDelta >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                 {capacityDelta >= 0 ? '+' : ''}{formatCurrency(capacityDelta)}/yr
@@ -177,11 +184,7 @@ export default function ScenariosPage() {
         </div>
 
         <div className="grid grid-cols-2 gap-x-10 gap-y-4">
-          <Metric
-            label="Spending Capacity"
-            value={formatCurrency(selected.result.spendingCapacity) + '/yr'}
-            large
-          />
+          <Metric label="Spending Capacity"      value={formatCurrency(selected.result.spendingCapacity) + '/yr'} large />
           <Metric
             label="Probability of Success"
             value={formatPercent(selected.result.probabilityOfSuccess)}
@@ -196,40 +199,24 @@ export default function ScenariosPage() {
             value={(isPositive ? '+' : '−') + formatCurrency(Math.abs(selected.result.surplusOrDeficit)) + '/yr'}
             valueClass={isPositive ? 'text-green-400' : 'text-red-400'}
           />
-          <Metric
-            label="Desired Spending"
-            value={formatCurrency(selected.result.desiredSpending) + '/yr'}
-          />
-          <Metric
-            label="Lower Guardrail Trigger"
-            value={`Portfolio drops ${formatCurrency(selected.result.lowerGuardrailDollarDrop)}`}
-          />
-          <Metric
-            label="Monthly Cut at Trigger"
-            value={formatCurrency(selected.result.lowerGuardrailSpendingCutDollars) + '/mo'}
-          />
+          <Metric label="Desired Spending"           value={formatCurrency(selected.result.desiredSpending) + '/yr'} />
+          <Metric label="Lower Guardrail Trigger"    value={'Drop ' + formatCurrency(selected.result.lowerGuardrailDollarDrop)} />
+          <Metric label="Monthly Cut at Trigger"     value={formatCurrency(selected.result.lowerGuardrailSpendingCutDollars) + '/mo'} />
         </div>
       </div>
 
       <p className="text-xs text-gray-600 leading-relaxed">
-        Guardrail: a 3% monthly spending cut triggers only if the portfolio drops 29% from its
-        starting value. Low-growth or sideways markets are the most common trigger — not sudden crashes.
-        All figures are in today&apos;s dollars, inflated at {((spending.inflationRate ?? 0.03) * 100).toFixed(0)}%/year.
+        Guardrail: a 3% monthly spending cut triggers only if the portfolio drops 29% from its starting value.
+        All projections inflate spending at {((spending.inflationRate ?? 0.03) * 100).toFixed(0)}%/yr.
       </p>
     </div>
   );
 }
 
 function Metric({
-  label,
-  value,
-  valueClass = 'text-white',
-  large = false,
+  label, value, valueClass = 'text-white', large = false,
 }: {
-  label: string;
-  value: string;
-  valueClass?: string;
-  large?: boolean;
+  label: string; value: string; valueClass?: string; large?: boolean;
 }) {
   return (
     <div>
