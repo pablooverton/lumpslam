@@ -2,12 +2,12 @@ import type { ClientProfile } from '../types/profile';
 import type { AssetSnapshot } from '../types/assets';
 import type { SpendingProfile } from '../types/spending';
 import type { GuardrailConfig, ScenarioResult, ScenarioType } from '../types/scenarios';
-import type { YearlyProjection, IncomeBreakdown, WithdrawalBreakdown, TaxLiability } from '../types/simulation';
+import type { YearlyProjection, IncomeBreakdown, WithdrawalBreakdown, TaxLiability, RothConversionEvent } from '../types/simulation';
 import { classifySeasonForYear, calculateMAGI, assessAcaEligibility, calculateIrmaaSurcharge, getCobraWindowEnd } from './seasons';
 import { calculateRothConversion } from './roth-conversion';
 import { calculateRMD, projectInheritedIraDistributions } from './rmd';
 import { calculateBenefitAtClaimAge } from './social-security';
-import { calculateOrdinaryIncomeTax } from './tax-utils';
+import { calculateOrdinaryIncomeTax, getMarginalRate } from './tax-utils';
 import { calculateSpendingCapacity } from './spending-capacity';
 import { FEDERAL_INCOME_TAX_BRACKETS_2025 } from '../constants/tax-brackets';
 import { getAcaCliff } from '../constants/aca-thresholds';
@@ -26,12 +26,23 @@ export function runSimulation(
   const growthRate = profile.annualGrowthRate ?? DEFAULT_GROWTH_RATE;
   const householdSize = profile.acaHouseholdSize ?? 2;
 
+  // Resolve effective engine.
+  // auto (default): conversion_primary when targetAnnualConversion is set, otherwise withdrawal_sequencing.
+  const effectiveEngine: 'withdrawal_sequencing' | 'conversion_primary' =
+    profile.spendingEngine === 'conversion_primary'
+      ? 'conversion_primary'
+      : profile.spendingEngine === 'withdrawal_sequencing'
+      ? 'withdrawal_sequencing'
+      : profile.targetAnnualConversion != null
+      ? 'conversion_primary'
+      : 'withdrawal_sequencing';
+
   const retirementYear =
     scenarioType === 'retire_now'
       ? profile.currentYear
       : scenarioType === 'retire_at_stated_date'
       ? (profile.retirementYearDesired ?? profile.currentYear)
-      : profile.currentYear + 5; // 'no_change' — work 5 more years as fallback
+      : profile.currentYear + 5;
 
   const cobraEndYear = getCobraWindowEnd(retirementYear, profile.cobraMonths);
 
@@ -43,8 +54,6 @@ export function runSimulation(
     );
 
   const yearsInRetirement = endYear - retirementYear;
-
-  // Project portfolio forward from today to retirement year.
   const workingYears = Math.max(0, retirementYear - profile.currentYear);
   const growthFactor = Math.pow(1 + growthRate, workingYears);
 
@@ -54,7 +63,6 @@ export function runSimulation(
   let inheritedIraBalance = assets.totalInheritedIra * growthFactor;
   let hsaBalance = assets.totalHsa * growthFactor;
 
-  // Project SS income at claim ages — this is what the portfolio doesn't need to fund
   const clientSSMonthly = calculateBenefitAtClaimAge(
     profile.client.fraMonthlyBenefit,
     profile.client.fullRetirementAge,
@@ -69,7 +77,6 @@ export function runSimulation(
     : 0;
   const projectedAnnualSS = (clientSSMonthly + spouseSSMonthly) * 12;
 
-  // Spending capacity is calculated against the projected (at-retirement) portfolio
   const projectedAssets = {
     ...assets,
     totalPretax: pretaxBalance,
@@ -87,12 +94,9 @@ export function runSimulation(
     projectedAnnualSS
   );
 
-  // desiredSpending for capacity comparison = essential spending only
   const desiredSpending = spending.baseAnnualSpending;
-
   const yearlyProjections: YearlyProjection[] = [];
 
-  // Inherited IRA 10-year rule: deduct working years already consumed
   const inheritedAccount = assets.accounts.find((a) => a.type === 'inherited_ira');
   const originalRemainingYears = inheritedAccount?.inheritedIraRemainingYears ?? 10;
   const adjustedRemainingYears = Math.max(0, originalRemainingYears - workingYears);
@@ -110,22 +114,19 @@ export function runSimulation(
       ? profile.spouse.age + (year - profile.currentYear)
       : null;
 
-    // Skip if both have exceeded life expectancy
     if (
       clientAge > profile.client.lifeExpectancy &&
       (spouseAge === null || spouseAge > (profile.spouse?.lifeExpectancy ?? 0))
     ) break;
 
     const season = classifySeasonForYear(year, profile, cobraEndYear);
-
-    // Spending (inflation-adjusted from retirement year)
     const inflationFactor = Math.pow(1 + INFLATION_RATE, yearIndex);
+
     const travelBudget =
       clientAge >= spending.travelTaperStartAge
         ? spending.travelBudgetLate
         : spending.travelBudgetEarly;
 
-    // Mortgage: fixed nominal P&I payment — NOT inflation-adjusted.
     const mortgagePayment =
       (spending.mortgageAnnualPayment ?? 0) > 0 &&
       spending.mortgagePaidOffAge !== undefined &&
@@ -133,11 +134,10 @@ export function runSimulation(
         ? spending.mortgageAnnualPayment!
         : 0;
 
-    // Healthcare: if annualHealthcareCost is set, draw from HSA first.
-    // Any remainder beyond HSA balance is added back to the spending pool.
+    // HSA covers healthcare costs first; overflow hits spending pool
     const rawHealthcareCost = (spending.annualHealthcareCost ?? 0) * inflationFactor;
     const fromHsa = Math.min(rawHealthcareCost, hsaBalance);
-    const healthcareOverflow = rawHealthcareCost - fromHsa; // portion HSA can't cover
+    const healthcareOverflow = rawHealthcareCost - fromHsa;
 
     const annualSpending =
       (spending.baseAnnualSpending + travelBudget + spending.charitableGivingAnnual) * inflationFactor
@@ -165,10 +165,7 @@ export function runSimulation(
     const ssSpouseAnnual = ssSpouseMonthly * 12;
     const totalSSAnnual = ssClientAnnual + ssSpouseAnnual;
 
-    // RMD
     const rmd = clientAge >= RMD_START_AGE ? calculateRMD(pretaxBalance, clientAge) : 0;
-
-    // Inherited IRA distribution
     const inheritedDist = inheritedDistributions[yearIndex] ?? 0;
 
     const income: IncomeBreakdown = {
@@ -180,160 +177,253 @@ export function runSimulation(
       total: ssClientAnnual + ssSpouseAnnual + rmd + inheritedDist,
     };
 
-    // Withdrawals: cover spending gap after income
-    const incomeGap = Math.max(0, annualSpending - income.total);
-    let fromBrokerage = 0;
-    let fromPretax = 0;
-    let fromRoth = 0;
+    // ─── Per-year logic branches on engine ───────────────────────────────────
 
-    const nonEssentialSpend =
-      (travelBudget + spending.charitableGivingAnnual) * inflationFactor;
+    let withdrawals: WithdrawalBreakdown;
+    let magi: number;
+    let rothConversion: RothConversionEvent | null = null;
 
-    if (season === 'cobra') {
-      // COBRA / bridge strategy: cover non-essential from brokerage first to preserve
-      // bracket headroom for Roth conversions.
-      fromBrokerage = Math.min(nonEssentialSpend, brokerageBalance, incomeGap);
-      const remainingGap = incomeGap - fromBrokerage;
-      fromPretax = Math.min(remainingGap, pretaxBalance);
-      fromRoth = Math.max(0, remainingGap - fromPretax);
-    } else if (season === 'aca') {
-      // ACA strategy: keep MAGI STRICTLY below the household-size-adjusted ACA cliff.
-      const ACA_CLIFF = getAcaCliff(householdSize);
-      const passiveMagi = inheritedDist + totalSSAnnual * 0.85;
-      // Subtract 1 so pretax + passiveMagi stays at most cliff - 1 (strictly below cliff)
-      const pretaxMagiCapacity = Math.max(0, ACA_CLIFF - passiveMagi - 1);
+    if (effectiveEngine === 'conversion_primary') {
+      // ── Conversion-Primary Engine ──────────────────────────────────────────
+      // The Roth conversion IS the income mechanism. Pretax only moves as conversion.
+      // Taxes and all spending are funded from Roth. MAGI = conversion + SS only.
+      //
+      // Best for: no-brokerage, high pre-tax balance, $242k/yr engine strategies.
+      // Matches the elective-conversion plan: pretax → Roth ($242k), Roth pays taxes + living.
 
-      // 1. Draw from brokerage (return-of-basis — no MAGI impact)
-      fromBrokerage = Math.min(incomeGap, brokerageBalance);
-      const afterBrokerage = incomeGap - fromBrokerage;
+      const targetConv = profile.targetAnnualConversion ?? 0;
 
-      // 2. Draw from pretax up to ACA MAGI cliff
-      fromPretax = Math.min(afterBrokerage, pretaxBalance, pretaxMagiCapacity);
-      const afterPretax = afterBrokerage - fromPretax;
+      // RMD is forced at age 73+; net conversion target is reduced so total pretax
+      // depletion = rmd + conversionAmount ≈ targetConv.
+      const conversionTarget = Math.max(0, targetConv - rmd);
+      const conversionAmount = Math.min(conversionTarget, pretaxBalance);
 
-      // 3. Draw from Roth if still short (no MAGI impact)
-      fromRoth = Math.min(afterPretax, rothBalance);
+      // MAGI = conversion + RMD + SS (85% includable) + inherited IRA distributions
+      const magiBase = conversionAmount + rmd + totalSSAnnual * 0.85 + inheritedDist;
+
+      // Total income tax on this MAGI (covers both conversion tax and SS/RMD tax)
+      const totalTax = calculateOrdinaryIncomeTax(magiBase, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025);
+      const marginalRate = getMarginalRate(magiBase, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025);
+
+      // Roth funds spending net of SS income (SS directly offsets spending needs)
+      const rothSpendingDraw = Math.max(0, annualSpending - totalSSAnnual);
+
+      // If Roth can't cover spending + taxes, draw emergency amount from pretax
+      const totalRothNeed = totalTax + rothSpendingDraw;
+      const rothAvailable = rothBalance + conversionAmount; // Roth balance after conversion in
+      const emergencyPretaxDraw = Math.max(0, totalRothNeed - rothAvailable);
+
+      magi = magiBase;
+
+      rothConversion = {
+        conversionAmount,
+        marginalRate,
+        taxOnConversion: totalTax,
+        brokerageFundingAmount: 0,
+        rothFundingAmount: totalTax, // taxes paid from Roth
+      };
+
+      withdrawals = {
+        fromPretax: rmd + emergencyPretaxDraw, // only RMD and emergency; spending is from Roth
+        fromBrokerage: 0,
+        fromRoth: rothSpendingDraw,
+        total: rmd + emergencyPretaxDraw + rothSpendingDraw,
+      };
+
+      // Portfolio updates
+      const portfolioStart = pretaxBalance + rothBalance + brokerageBalance + inheritedIraBalance + hsaBalance;
+
+      pretaxBalance = Math.max(0, pretaxBalance - rmd - emergencyPretaxDraw - conversionAmount);
+      // Roth: gains conversion, pays taxes and spending
+      rothBalance = Math.max(0, rothBalance + conversionAmount - totalTax - rothSpendingDraw);
+      inheritedIraBalance = Math.max(0, inheritedIraBalance - inheritedDist);
+      hsaBalance = Math.max(0, hsaBalance - fromHsa);
+
+      pretaxBalance *= 1 + growthRate;
+      brokerageBalance *= 1 + growthRate;
+      rothBalance *= 1 + growthRate;
+      inheritedIraBalance *= 1 + growthRate;
+      hsaBalance *= 1 + growthRate;
+
+      const portfolioEnd = pretaxBalance + rothBalance + brokerageBalance + inheritedIraBalance + hsaBalance;
+
+      // ACA eligibility uses conversion-driven MAGI (may be over cliff — expected for this strategy)
+      const acaResult = season === 'aca' ? assessAcaEligibility(magi, householdSize) : null;
+      const irmaaSurcharge =
+        season === 'medicare' || season === 'rmd'
+          ? calculateIrmaaSurcharge(magi, profile.filingStatus)
+          : 0;
+
+      const taxLiability: TaxLiability = {
+        ordinaryIncomeTax: 0, // all tax is on the conversion
+        capitalGainsTax: 0,
+        rothConversionTax: totalTax,
+        totalFederalTax: totalTax,
+        effectiveRate: magi > 0 ? totalTax / magi : 0,
+      };
+
+      yearlyProjections.push({
+        year,
+        clientAge,
+        spouseAge,
+        season,
+        income,
+        withdrawals,
+        rothConversion,
+        taxLiability,
+        portfolioStartBalance: portfolioStart,
+        portfolioEndBalance: portfolioEnd,
+        magi,
+        acaSubsidyEligible: acaResult?.eligible ?? false,
+        estimatedAcaSavings: acaResult?.estimatedAnnualSavings ?? 0,
+        irmaaApplies: irmaaSurcharge > 0,
+        irmaaSurcharge,
+      });
+
     } else {
-      // Medicare / RMD: pretax first, then brokerage, then Roth
-      fromPretax = Math.min(incomeGap, pretaxBalance);
-      const remainingGap = incomeGap - fromPretax;
-      fromBrokerage = Math.min(remainingGap, brokerageBalance);
-      fromRoth = Math.max(0, remainingGap - fromBrokerage);
-    }
+      // ── Withdrawal-Sequencing Engine (original) ────────────────────────────
+      // Draw from accounts in sequence to cover the spending gap, then convert
+      // surplus bracket capacity to Roth. Tax paid from brokerage when available.
+      //
+      // Best for: brokerage-backed strategies, ACA cliff optimization.
 
-    const withdrawals: WithdrawalBreakdown = {
-      fromPretax: fromPretax + rmd,
-      fromBrokerage,
-      fromRoth,
-      total: fromPretax + rmd + fromBrokerage + fromRoth,
-    };
+      const incomeGap = Math.max(0, annualSpending - income.total);
+      const nonEssentialSpend =
+        (travelBudget + spending.charitableGivingAnnual) * inflationFactor;
 
-    // MAGI calculation
-    const magi = calculateMAGI({
-      socialSecurityIncludable: totalSSAnnual * 0.85,
-      pretaxWithdrawals: fromPretax + rmd,
-      rothConversionAmount: 0, // will add conversion below
-      capitalGainsRealized: 0,
-      otherIncome: inheritedDist,
-    });
+      let fromBrokerage = 0;
+      let fromPretax = 0;
+      let fromRoth = 0;
 
-    // Roth conversion (only in cobra and medicare seasons, not ACA or RMD)
-    let rothConversion = null;
-    if ((season === 'cobra' || season === 'medicare') && pretaxBalance > 0) {
-      const surplus = capacityResult.spendingCapacity - spending.baseAnnualSpending;
-      const TARGET_BRACKET_CEILING =
-        profile.filingStatus === 'married_filing_jointly' ? 206_700 : 103_350;
-      rothConversion = calculateRothConversion({
-        currentMAGI: magi,
-        surplusSpendingCapacity: Math.max(0, surplus),
-        targetAmount: profile.targetAnnualConversion,
-        pretaxBalance,
-        brokerageBalance,
-        filingStatus: profile.filingStatus,
-        targetBracketCeiling: TARGET_BRACKET_CEILING,
+      if (season === 'cobra') {
+        fromBrokerage = Math.min(nonEssentialSpend, brokerageBalance, incomeGap);
+        const remainingGap = incomeGap - fromBrokerage;
+        fromPretax = Math.min(remainingGap, pretaxBalance);
+        fromRoth = Math.max(0, remainingGap - fromPretax);
+      } else if (season === 'aca') {
+        const ACA_CLIFF = getAcaCliff(householdSize);
+        const passiveMagi = inheritedDist + totalSSAnnual * 0.85;
+        const pretaxMagiCapacity = Math.max(0, ACA_CLIFF - passiveMagi - 1);
+        fromBrokerage = Math.min(incomeGap, brokerageBalance);
+        const afterBrokerage = incomeGap - fromBrokerage;
+        fromPretax = Math.min(afterBrokerage, pretaxBalance, pretaxMagiCapacity);
+        const afterPretax = afterBrokerage - fromPretax;
+        fromRoth = Math.min(afterPretax, rothBalance);
+      } else {
+        fromPretax = Math.min(incomeGap, pretaxBalance);
+        const remainingGap = incomeGap - fromPretax;
+        fromBrokerage = Math.min(remainingGap, brokerageBalance);
+        fromRoth = Math.max(0, remainingGap - fromBrokerage);
+      }
+
+      withdrawals = {
+        fromPretax: fromPretax + rmd,
+        fromBrokerage,
+        fromRoth,
+        total: fromPretax + rmd + fromBrokerage + fromRoth,
+      };
+
+      magi = calculateMAGI({
+        socialSecurityIncludable: totalSSAnnual * 0.85,
+        pretaxWithdrawals: fromPretax + rmd,
+        rothConversionAmount: 0,
+        capitalGainsRealized: 0,
+        otherIncome: inheritedDist,
+      });
+
+      if ((season === 'cobra' || season === 'medicare') && pretaxBalance > 0) {
+        const surplus = capacityResult.spendingCapacity - spending.baseAnnualSpending;
+        const TARGET_BRACKET_CEILING =
+          profile.filingStatus === 'married_filing_jointly' ? 206_700 : 103_350;
+        rothConversion = calculateRothConversion({
+          currentMAGI: magi,
+          surplusSpendingCapacity: Math.max(0, surplus),
+          targetAmount: profile.targetAnnualConversion,
+          pretaxBalance,
+          brokerageBalance,
+          filingStatus: profile.filingStatus,
+          targetBracketCeiling: TARGET_BRACKET_CEILING,
+        });
+      }
+
+      const magiWithConversion = magi + (rothConversion?.conversionAmount ?? 0);
+
+      const acaResult = season === 'aca'
+        ? assessAcaEligibility(magiWithConversion, householdSize)
+        : null;
+      const irmaaSurcharge =
+        season === 'medicare' || season === 'rmd'
+          ? calculateIrmaaSurcharge(magiWithConversion, profile.filingStatus)
+          : 0;
+
+      const ordinaryIncomeTax = calculateOrdinaryIncomeTax(
+        magiWithConversion,
+        profile.filingStatus,
+        FEDERAL_INCOME_TAX_BRACKETS_2025
+      );
+      const rothConversionTax = rothConversion?.taxOnConversion ?? 0;
+
+      const taxLiability: TaxLiability = {
+        ordinaryIncomeTax,
+        capitalGainsTax: 0,
+        rothConversionTax,
+        totalFederalTax: ordinaryIncomeTax + rothConversionTax,
+        effectiveRate:
+          magiWithConversion > 0
+            ? (ordinaryIncomeTax + rothConversionTax) / magiWithConversion
+            : 0,
+      };
+
+      magi = magiWithConversion;
+
+      const portfolioStart =
+        pretaxBalance + rothBalance + brokerageBalance + inheritedIraBalance + hsaBalance;
+
+      pretaxBalance = Math.max(
+        0,
+        pretaxBalance - withdrawals.fromPretax - (rothConversion?.conversionAmount ?? 0)
+      );
+      brokerageBalance = Math.max(
+        0,
+        brokerageBalance - withdrawals.fromBrokerage - (rothConversion?.brokerageFundingAmount ?? 0)
+      );
+      rothBalance = Math.max(
+        0,
+        rothBalance
+          - withdrawals.fromRoth
+          + (rothConversion?.conversionAmount ?? 0)
+          - (rothConversion?.rothFundingAmount ?? 0)
+      );
+      inheritedIraBalance = Math.max(0, inheritedIraBalance - inheritedDist);
+      hsaBalance = Math.max(0, hsaBalance - fromHsa);
+
+      pretaxBalance *= 1 + growthRate;
+      brokerageBalance *= 1 + growthRate;
+      rothBalance *= 1 + growthRate;
+      inheritedIraBalance *= 1 + growthRate;
+      hsaBalance *= 1 + growthRate;
+
+      const portfolioEnd =
+        pretaxBalance + rothBalance + brokerageBalance + inheritedIraBalance + hsaBalance;
+
+      yearlyProjections.push({
+        year,
+        clientAge,
+        spouseAge,
+        season,
+        income,
+        withdrawals,
+        rothConversion,
+        taxLiability,
+        portfolioStartBalance: portfolioStart,
+        portfolioEndBalance: portfolioEnd,
+        magi,
+        acaSubsidyEligible: acaResult?.eligible ?? false,
+        estimatedAcaSavings: acaResult?.estimatedAnnualSavings ?? 0,
+        irmaaApplies: irmaaSurcharge > 0,
+        irmaaSurcharge,
       });
     }
-
-    const magiWithConversion = magi + (rothConversion?.conversionAmount ?? 0);
-
-    // ACA eligibility (uses household-size-adjusted cliff)
-    const acaResult = season === 'aca'
-      ? assessAcaEligibility(magiWithConversion, householdSize)
-      : null;
-    const irmaaSurcharge =
-      season === 'medicare' || season === 'rmd'
-        ? calculateIrmaaSurcharge(magiWithConversion, profile.filingStatus)
-        : 0;
-
-    // Tax
-    const ordinaryIncomeTax = calculateOrdinaryIncomeTax(
-      magiWithConversion,
-      profile.filingStatus,
-      FEDERAL_INCOME_TAX_BRACKETS_2025
-    );
-    const rothConversionTax = rothConversion?.taxOnConversion ?? 0;
-
-    const taxLiability: TaxLiability = {
-      ordinaryIncomeTax,
-      capitalGainsTax: 0,
-      rothConversionTax,
-      totalFederalTax: ordinaryIncomeTax + rothConversionTax,
-      effectiveRate:
-        magiWithConversion > 0
-          ? (ordinaryIncomeTax + rothConversionTax) / magiWithConversion
-          : 0,
-    };
-
-    // Portfolio updates
-    const portfolioStart =
-      pretaxBalance + rothBalance + brokerageBalance + inheritedIraBalance + hsaBalance;
-
-    pretaxBalance = Math.max(
-      0,
-      pretaxBalance - withdrawals.fromPretax - (rothConversion?.conversionAmount ?? 0)
-    );
-    brokerageBalance = Math.max(
-      0,
-      brokerageBalance - withdrawals.fromBrokerage - (rothConversion?.brokerageFundingAmount ?? 0)
-    );
-    // Roth: gains from conversion, pays spending draws and any conversion tax not covered by brokerage
-    rothBalance = Math.max(
-      0,
-      rothBalance
-        - withdrawals.fromRoth
-        + (rothConversion?.conversionAmount ?? 0)
-        - (rothConversion?.rothFundingAmount ?? 0)
-    );
-    inheritedIraBalance = Math.max(0, inheritedIraBalance - inheritedDist);
-    hsaBalance = Math.max(0, hsaBalance - fromHsa);
-
-    // Apply growth to all accounts
-    pretaxBalance *= 1 + growthRate;
-    brokerageBalance *= 1 + growthRate;
-    rothBalance *= 1 + growthRate;
-    inheritedIraBalance *= 1 + growthRate;
-    hsaBalance *= 1 + growthRate;
-
-    const portfolioEnd =
-      pretaxBalance + rothBalance + brokerageBalance + inheritedIraBalance + hsaBalance;
-
-    yearlyProjections.push({
-      year,
-      clientAge,
-      spouseAge,
-      season,
-      income,
-      withdrawals,
-      rothConversion,
-      taxLiability,
-      portfolioStartBalance: portfolioStart,
-      portfolioEndBalance: portfolioEnd,
-      magi: magiWithConversion,
-      acaSubsidyEligible: acaResult?.eligible ?? false,
-      estimatedAcaSavings: acaResult?.estimatedAnnualSavings ?? 0,
-      irmaaApplies: irmaaSurcharge > 0,
-      irmaaSurcharge,
-    });
   }
 
   return {

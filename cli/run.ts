@@ -69,7 +69,8 @@ interface AccountInput {
 }
 
 interface SpendingInput {
-  /** Fixed costs that don't change with activity: housing, utilities, groceries, insurance */
+  /** Fixed costs that don't change with activity: housing, utilities, groceries, insurance.
+   *  Do NOT include healthcare here if using annualHealthcareCost below. */
   essential: number;
   /** Discretionary spending in active years (travel, dining, hobbies) */
   lifestyleActive?: number;
@@ -83,6 +84,13 @@ interface SpendingInput {
   lumpyExpenses?: Array<{ year: number; label: string; amount: number }>;
   /** Inflation rate as a percentage, e.g. 3 means 3%. Default: 3 */
   inflationRate?: number;
+  /** Fixed-rate mortgage P&I payment (nominal, not inflation-adjusted). Omit if no mortgage. */
+  mortgageAnnualPayment?: number;
+  /** Client age when mortgage is paid off (last payment year). */
+  mortgagePaidOffAge?: number;
+  /** If set, this amount is drawn from HSA each year before hitting the spending pool.
+   *  Covers ACA premiums, Medicare Part B/D, Medigap, etc. */
+  annualHealthcareCost?: number;
 }
 
 interface ProfileInput {
@@ -96,6 +104,21 @@ interface ProfileInput {
   currentYear: number;
   /** The year you want to retire. "Retire Now" scenario uses currentYear. */
   retirementYear: number;
+  /** Months of COBRA coverage after retirement. 0 = skip COBRA, go straight to ACA. Default: 18 */
+  cobraMonths?: number;
+  /** Number of people on ACA plan. Determines subsidy cliff: 2=$84,600 · 3=$106,120 · 4=$127,640. Default: 2 */
+  acaHouseholdSize?: number;
+  /** Nominal annual portfolio growth rate as a percentage, e.g. 9 means 9%. Default: 7 */
+  annualGrowthRate?: number;
+  /** "us" | "international". International skips ACA season (no cliff). Default: "us" */
+  retirementLocation?: 'us' | 'international';
+  /** If set, drives Roth conversion by target amount (e.g. 242000) rather than surplus.
+   *  Useful for conversion-centric strategies. */
+  targetAnnualConversion?: number;
+  /** Engine selection. "auto" (default): picks conversion_primary when targetAnnualConversion is set.
+   *  "withdrawal_sequencing": draw accounts to cover spending, convert surplus to Roth.
+   *  "conversion_primary": convert targetAnnualConversion first; Roth pays taxes + spending. */
+  spendingEngine?: 'withdrawal_sequencing' | 'conversion_primary' | 'auto';
   accounts: AccountInput[];
   /** Home equity — non-liquid, for reference only */
   homeEquity?: number;
@@ -153,7 +176,12 @@ function loadProfile(filePath: string): {
     hasStateIncomeTax: stateInfo?.hasIncomeTax ?? true,
     currentYear: input.currentYear,
     retirementYearDesired: input.retirementYear,
-    cobraMonths: 18,
+    cobraMonths: input.cobraMonths ?? 18,
+    acaHouseholdSize: input.acaHouseholdSize,
+    annualGrowthRate: input.annualGrowthRate != null ? input.annualGrowthRate / 100 : undefined,
+    retirementLocation: input.retirementLocation,
+    targetAnnualConversion: input.targetAnnualConversion,
+    spendingEngine: input.spendingEngine,
   };
 
   // ── Accounts
@@ -184,6 +212,13 @@ function loadProfile(filePath: string): {
     charitableGivingAnnual: sp.charitable ?? 0,
     oneTimeExpenses: lumpyExpenses,
     inflationRate: (sp.inflationRate ?? 3) / 100,
+    ...(sp.mortgageAnnualPayment && sp.mortgageAnnualPayment > 0 && {
+      mortgageAnnualPayment: sp.mortgageAnnualPayment,
+      mortgagePaidOffAge: sp.mortgagePaidOffAge,
+    }),
+    ...(sp.annualHealthcareCost && sp.annualHealthcareCost > 0 && {
+      annualHealthcareCost: sp.annualHealthcareCost,
+    }),
   };
 
   // ── Guardrails

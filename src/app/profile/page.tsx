@@ -76,6 +76,7 @@ interface FormState {
   annualGrowthRatePct: number;       // nominal portfolio growth rate, as percentage (e.g. 7)
   retirementLocation: 'us' | 'international';
   targetAnnualConversion: number;    // 0 = surplus-driven (default)
+  spendingEngine: 'withdrawal_sequencing' | 'conversion_primary' | 'auto';
   accounts: Account[];
   homeEquity: number;
   essentialAnnualSpending: number;   // maps to baseAnnualSpending (exclude healthcare if using HSA)
@@ -120,6 +121,7 @@ function buildFormState(
     annualGrowthRatePct: ((profile?.annualGrowthRate ?? 0.07) * 100),
     retirementLocation: profile?.retirementLocation ?? 'us',
     targetAnnualConversion: profile?.targetAnnualConversion ?? 0,
+    spendingEngine: profile?.spendingEngine ?? 'auto',
     accounts: accounts.length > 0 ? accounts : [{ id: '1', label: '', owner: 'client', type: 'pretax_ira', currentBalance: 0 }],
     homeEquity,
     essentialAnnualSpending: spending?.baseAnnualSpending ?? 0,
@@ -235,6 +237,9 @@ export default function ProfilePage() {
       retirementLocation: form.retirementLocation,
       ...(form.targetAnnualConversion > 0 && {
         targetAnnualConversion: form.targetAnnualConversion,
+      }),
+      ...(form.spendingEngine !== 'auto' && {
+        spendingEngine: form.spendingEngine,
       }),
     };
 
@@ -451,6 +456,33 @@ export default function ProfilePage() {
                 />
                 <p className="text-xs text-gray-500 mt-1">
                   If set, drives Roth conversion by target (e.g. $242k) rather than surplus. Leave at $0 for automatic surplus-based conversions.
+                </p>
+              </Field>
+
+              {/* Spending engine */}
+              <Field label="Spending Engine">
+                <div className="flex gap-2">
+                  {(['auto', 'withdrawal_sequencing', 'conversion_primary'] as const).map((eng) => (
+                    <button
+                      key={eng}
+                      type="button"
+                      onClick={() => set('spendingEngine', eng)}
+                      className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                        form.spendingEngine === eng
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-800 border border-gray-700 text-gray-400 hover:text-gray-200'
+                      }`}
+                    >
+                      {eng === 'auto' ? 'Auto' : eng === 'withdrawal_sequencing' ? 'Withdrawal-First' : 'Conversion-First'}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
+                  {form.spendingEngine === 'conversion_primary'
+                    ? 'Conversion-First: convert target amount from pre-tax each year; Roth covers taxes + spending. Best for high pre-tax balance, no-brokerage strategies.'
+                    : form.spendingEngine === 'withdrawal_sequencing'
+                      ? 'Withdrawal-First: draw from accounts to meet spending, convert surplus bracket capacity to Roth. Best for brokerage-backed strategies.'
+                      : 'Auto: picks Conversion-First when a target conversion is set; otherwise Withdrawal-First.'}
                 </p>
               </Field>
             </div>
