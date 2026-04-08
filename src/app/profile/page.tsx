@@ -399,9 +399,14 @@ export default function ProfilePage() {
                 ))}
               </div>
               {form.retireOutsideUS && (
-                <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
-                  ACA subsidies don&apos;t apply. Pre-Medicare years have no income cliff — Roth conversions can be maximized freely. Include international health insurance in Essential Expenses.
-                </p>
+                <div className="mt-2 space-y-1.5 text-xs leading-relaxed">
+                  <p className="text-gray-400">
+                    <span className="text-green-400 font-medium">What changes:</span> No ACA. Pre-Medicare years have no income cliff — Roth conversions can run freely. Include international health insurance in Essential Expenses.
+                  </p>
+                  <p className="text-gray-500">
+                    <span className="text-yellow-600 font-medium">What this tool doesn&apos;t model:</span> Foreign tax credits (taxes paid abroad can offset your US bill — actual liability may be lower), and state taxes (if you formally change domicile, you may owe nothing to your prior state). Tax treaty details are country-specific and beyond scope here — consult a cross-border tax advisor for those.
+                  </p>
+                </div>
               )}
             </div>
 
