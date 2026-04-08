@@ -2,6 +2,9 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useProfileStore } from '@/store/profile.store';
+import { useSimulationStore } from '@/store/simulation.store';
+import { buildMarkdownExport } from '@/lib/export-markdown';
 
 const NAV_ITEMS = [
   { href: '/profile',         label: 'Profile & Assets' },
@@ -15,6 +18,33 @@ const NAV_ITEMS = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const { profile, assets, spending } = useProfileStore();
+  const { scenarios, ssComparison, opportunities } = useSimulationStore();
+
+  function handleExport() {
+    if (!profile || !assets || !spending || scenarios.length === 0) return;
+    const md = buildMarkdownExport({
+      profile,
+      assets,
+      spending,
+      accounts: assets.accounts,
+      scenarios,
+      ssComparison,
+      opportunities,
+    });
+    const blob = new Blob([md], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const names = profile.spouse
+      ? `${profile.client.name}-${profile.spouse.name}`
+      : profile.client.name;
+    a.download = `lumpslam-${names.toLowerCase()}-${profile.currentYear}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const canExport = !!profile && !!assets && !!spending && scenarios.length > 0;
 
   return (
     <div className="flex min-h-screen bg-gray-950 text-gray-100">
@@ -35,6 +65,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {item.label}
           </Link>
         ))}
+        <div className="mt-auto pt-6">
+          <button
+            onClick={handleExport}
+            disabled={!canExport}
+            title={canExport ? 'Download full report as Markdown' : 'Run a simulation first'}
+            className="w-full px-3 py-2 rounded text-sm text-left transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-gray-400 hover:text-white hover:bg-gray-800 flex items-center gap-2"
+          >
+            <span>↓</span>
+            <span>Export Markdown</span>
+          </button>
+        </div>
       </nav>
       <main className="flex-1 p-8 overflow-auto">{children}</main>
     </div>
