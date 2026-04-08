@@ -1,4 +1,6 @@
-export type RetirementSeason = 'cobra' | 'aca' | 'medicare' | 'rmd';
+// 'international' = pre-Medicare years when retirementLocation=international.
+// Same engine rules as 'cobra' (no MAGI cliff, free conversions) but distinct for display.
+export type RetirementSeason = 'cobra' | 'aca' | 'medicare' | 'rmd' | 'international';
 
 export interface IncomeBreakdown {
   socialSecurityClient: number;

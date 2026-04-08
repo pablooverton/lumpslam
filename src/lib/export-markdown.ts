@@ -19,6 +19,7 @@ const SEASON_LABEL: Record<string, string> = {
   aca: 'ACA',
   medicare: 'Medicare',
   rmd: 'RMD Era',
+  international: 'International',
 };
 
 export function buildMarkdownExport(params: {

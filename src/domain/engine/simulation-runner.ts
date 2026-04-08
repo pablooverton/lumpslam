@@ -295,7 +295,7 @@ export function runSimulation(
       let fromPretax = 0;
       let fromRoth = 0;
 
-      if (season === 'cobra') {
+      if (season === 'cobra' || season === 'international') {
         fromBrokerage = Math.min(nonEssentialSpend, brokerageBalance, incomeGap);
         const remainingGap = incomeGap - fromBrokerage;
         fromPretax = Math.min(remainingGap, pretaxBalance);
@@ -331,7 +331,7 @@ export function runSimulation(
         otherIncome: inheritedDist,
       });
 
-      if ((season === 'cobra' || season === 'medicare') && pretaxBalance > 0) {
+      if ((season === 'cobra' || season === 'international' || season === 'medicare') && pretaxBalance > 0) {
         const surplus = capacityResult.spendingCapacity - spending.baseAnnualSpending;
         const TARGET_BRACKET_CEILING =
           profile.filingStatus === 'married_filing_jointly' ? 206_700 : 103_350;

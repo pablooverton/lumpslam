@@ -19,10 +19,11 @@ export function classifySeasonForYear(
     ? profile.client.age + (year - profile.currentYear)
     : profile.client.age;
 
-  // International retirement: no ACA season. Pre-Medicare years use COBRA mechanics
-  // (no MAGI cliff, unrestricted withdrawals — appropriate for non-US healthcare).
+  // International retirement: no ACA season. Pre-Medicare years use the same engine rules
+  // as COBRA (no MAGI cliff, unrestricted withdrawals) but are labeled 'international'
+  // so the user isn't confused by 25 years of "COBRA" in the projection table.
   if (profile.retirementLocation === 'international') {
-    if (clientAge < 65) return 'cobra';
+    if (clientAge < 65) return 'international';
     if (clientAge < RMD_START_AGE) return 'medicare';
     return 'rmd';
   }

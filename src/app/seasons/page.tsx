@@ -11,6 +11,7 @@ const SEASON_LABELS: Record<RetirementSeason, string> = {
   aca: 'ACA Window',
   medicare: 'Medicare',
   rmd: 'RMD Era',
+  international: 'International',
 };
 
 const SEASON_COLORS: Record<RetirementSeason, string> = {
@@ -18,6 +19,7 @@ const SEASON_COLORS: Record<RetirementSeason, string> = {
   aca: 'bg-blue-900 border-blue-700',
   medicare: 'bg-teal-900 border-teal-700',
   rmd: 'bg-orange-900 border-orange-700',
+  international: 'bg-violet-900 border-violet-700',
 };
 
 export default function SeasonsPage() {
@@ -92,6 +94,8 @@ function ProjectionRow({ projection: p }: { projection: YearlyProjection }) {
       ? 'text-purple-400'
       : p.season === 'medicare'
       ? 'text-teal-400'
+      : p.season === 'international'
+      ? 'text-violet-400'
       : 'text-orange-400';
 
   return (

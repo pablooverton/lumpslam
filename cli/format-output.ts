@@ -111,17 +111,19 @@ export function printScenarios(scenarios: ScenarioResult[]): void {
 // ─── Seasons ─────────────────────────────────────────────────────────────────
 
 const SEASON_LABEL: Record<RetirementSeason, string> = {
-  cobra:    'COBRA   ',
-  aca:      'ACA     ',
-  medicare: 'Medicare',
-  rmd:      'RMD Era ',
+  cobra:         'COBRA   ',
+  aca:           'ACA     ',
+  medicare:      'Medicare',
+  rmd:           'RMD Era ',
+  international: 'Intl    ',
 };
 
 const SEASON_COLOR: Record<RetirementSeason, string> = {
-  cobra:    '\x1b[35m', // magenta
-  aca:      '\x1b[34m', // blue
-  medicare: '\x1b[36m', // cyan
-  rmd:      '\x1b[33m', // yellow
+  cobra:         '\x1b[35m', // magenta
+  aca:           '\x1b[34m', // blue
+  medicare:      '\x1b[36m', // cyan
+  rmd:           '\x1b[33m', // yellow
+  international: '\x1b[95m', // bright magenta
 };
 
 export function printSeasons(projections: YearlyProjection[], years = 30): void {
