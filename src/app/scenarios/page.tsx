@@ -6,12 +6,6 @@ import { formatCurrency, formatPercent } from '@/lib/format';
 import type { ScenarioResult } from '@/domain/types/scenarios';
 import Link from 'next/link';
 
-const SCENARIO_LABELS: Record<string, string> = {
-  retire_now: 'Retire Now',
-  retire_at_stated_date: 'Retire at Stated Date',
-  no_change: 'Status Quo',
-};
-
 export default function ScenariosPage() {
   const { scenarios, isStale, isRunning, runSimulations } = useSimulationStore();
   const { profile } = useProfileStore();
@@ -27,10 +21,59 @@ export default function ScenariosPage() {
     );
   }
 
+  const retireNow    = scenarios.find((s) => s.scenarioType === 'retire_now');
+  const retireStated = scenarios.find((s) => s.scenarioType === 'retire_at_stated_date');
+  const workLonger   = scenarios.find((s) => s.scenarioType === 'no_change');
+
+  // When target = current year, retire_now and retire_stated are identical.
+  // Instead of showing the duplicate, swap the middle slot to "retire_now + 2 years"
+  // which is more informative.
+  const isDuplicate =
+    retireNow && retireStated &&
+    retireNow.retirementYear === retireStated.retirementYear;
+
+  function ageAtYear(year: number): number {
+    return (profile?.client.age ?? 0) + (year - (profile?.currentYear ?? year));
+  }
+
+  // Build the three display slots
+  const slots: Array<{ result: ScenarioResult; label: string; sublabel: string }> = [];
+
+  if (isDuplicate) {
+    // "Your Plan" + "Work 3 More" + "Work 5 More" isn't possible with 3 fixed scenarios,
+    // so show: "Your Plan" (retire_now) + "Work 3 More Years" (no_change) only — 2 cards.
+    if (retireNow) slots.push({
+      result: retireNow,
+      label: 'Your Plan',
+      sublabel: `Retire ${retireNow.retirementYear} · age ${ageAtYear(retireNow.retirementYear)}`,
+    });
+    if (workLonger) slots.push({
+      result: workLonger,
+      label: 'Work 3 More Years',
+      sublabel: `Retire ${workLonger.retirementYear} · age ${ageAtYear(workLonger.retirementYear)}`,
+    });
+  } else {
+    if (retireNow) slots.push({
+      result: retireNow,
+      label: 'Retire Now',
+      sublabel: `${retireNow.retirementYear} · age ${ageAtYear(retireNow.retirementYear)}`,
+    });
+    if (retireStated) slots.push({
+      result: retireStated,
+      label: 'Your Target Date',
+      sublabel: `${retireStated.retirementYear} · age ${ageAtYear(retireStated.retirementYear)}`,
+    });
+    if (workLonger) slots.push({
+      result: workLonger,
+      label: 'Work 3 More Years',
+      sublabel: `${workLonger.retirementYear} · age ${ageAtYear(workLonger.retirementYear)}`,
+    });
+  }
+
   return (
     <div className="max-w-5xl">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-white">Three Baseline Scenarios</h1>
+      <div className="flex items-center justify-between mb-2">
+        <h1 className="text-2xl font-bold text-white">Baseline Scenarios</h1>
         <button
           onClick={runSimulations}
           disabled={isRunning}
@@ -40,12 +83,24 @@ export default function ScenariosPage() {
         </button>
       </div>
 
+      <p className="text-sm text-gray-500 mb-6">
+        {isDuplicate
+          ? 'You\'re planning to retire now. The comparison shows how much more security working a few more years would add.'
+          : 'Compare retiring now against your target date and what 3 more working years would mean.'}
+      </p>
+
       {scenarios.length === 0 ? (
         <p className="text-gray-400">No results yet. Run the simulation to see your scenarios.</p>
       ) : (
-        <div className="grid grid-cols-3 gap-4">
-          {scenarios.map((s) => (
-            <ScenarioCard key={s.scenarioType} scenario={s} />
+        <div className={`grid gap-4 ${slots.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+          {slots.map(({ result, label, sublabel }) => (
+            <ScenarioCard
+              key={result.scenarioType}
+              scenario={result}
+              label={label}
+              sublabel={sublabel}
+              isHighlighted={result.scenarioType === 'retire_at_stated_date' || (!!isDuplicate && result.scenarioType === 'retire_now')}
+            />
           ))}
         </div>
       )}
@@ -64,7 +119,17 @@ export default function ScenariosPage() {
   );
 }
 
-function ScenarioCard({ scenario }: { scenario: ScenarioResult }) {
+function ScenarioCard({
+  scenario,
+  label,
+  sublabel,
+  isHighlighted,
+}: {
+  scenario: ScenarioResult;
+  label: string;
+  sublabel: string;
+  isHighlighted: boolean;
+}) {
   const isPositive = scenario.surplusOrDeficit >= 0;
   const successColor =
     scenario.probabilityOfSuccess >= 0.90
@@ -74,13 +139,15 @@ function ScenarioCard({ scenario }: { scenario: ScenarioResult }) {
       : 'text-red-400';
 
   return (
-    <div className="rounded-lg border border-gray-700 bg-gray-900 p-5">
-      <h2 className="font-semibold text-white mb-4">{SCENARIO_LABELS[scenario.scenarioType]}</h2>
+    <div className={`rounded-lg border bg-gray-900 p-5 ${isHighlighted ? 'border-blue-600' : 'border-gray-700'}`}>
+      <div className="mb-4">
+        <h2 className={`font-semibold mb-0.5 ${isHighlighted ? 'text-blue-300' : 'text-white'}`}>{label}</h2>
+        <p className="text-xs text-gray-500">{sublabel}</p>
+      </div>
 
       <div className="space-y-3">
-        <Stat label="Retirement Year" value={String(scenario.retirementYear)} />
         <Stat label="Spending Capacity" value={formatCurrency(scenario.spendingCapacity)} />
-        <Stat label="Desired Spending" value={formatCurrency(scenario.desiredSpending)} />
+        <Stat label="Desired Spending"  value={formatCurrency(scenario.desiredSpending)} />
         <Stat
           label="Surplus / Deficit"
           value={formatCurrency(Math.abs(scenario.surplusOrDeficit))}

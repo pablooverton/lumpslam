@@ -37,12 +37,13 @@ export function runSimulation(
       ? 'conversion_primary'
       : 'withdrawal_sequencing';
 
+  const targetYear = profile.retirementYearDesired ?? profile.currentYear;
   const retirementYear =
     scenarioType === 'retire_now'
       ? profile.currentYear
       : scenarioType === 'retire_at_stated_date'
-      ? (profile.retirementYearDesired ?? profile.currentYear)
-      : profile.currentYear + 5;
+      ? targetYear
+      : targetYear + 3; // "work 3 more years from your plan"
 
   const cobraEndYear = getCobraWindowEnd(retirementYear, profile.cobraMonths);
 
