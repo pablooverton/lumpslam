@@ -1,3 +1,2 @@
 export { useProfileStore } from './profile.store';
 export { useSimulationStore } from './simulation.store';
-export { useUIStore } from './ui.store';

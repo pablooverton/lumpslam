@@ -14,7 +14,6 @@ import { getAcaCliff } from '../constants/aca-thresholds';
 import { RMD_START_AGE } from '../constants/rmd-tables';
 
 const DEFAULT_GROWTH_RATE = 0.07;
-const INFLATION_RATE = 0.03;
 
 export function runSimulation(
   profile: ClientProfile,
@@ -121,7 +120,7 @@ export function runSimulation(
     ) break;
 
     const season = classifySeasonForYear(year, profile, cobraEndYear);
-    const inflationFactor = Math.pow(1 + INFLATION_RATE, yearIndex);
+    const inflationFactor = Math.pow(1 + spending.inflationRate, yearIndex);
 
     const travelBudget =
       clientAge >= spending.travelTaperStartAge

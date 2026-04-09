@@ -57,10 +57,10 @@ export default function ScenariosPage() {
 
   if (yearData.length === 0) return null;
 
-  const selected  = yearData[selectedIndex];
-  const baseline  = yearData[0];
+  const selected   = yearData[selectedIndex];
   const targetYear = profile.retirementYearDesired ?? profile.currentYear;
   const fraYear    = profile.currentYear + (profile.client.fullRetirementAge - profile.client.age);
+  const targetData = yearData.find((d) => d.year === targetYear) ?? yearData[0];
 
   const clientAgeAt = (year: number) => profile.client.age + (year - profile.currentYear);
 
@@ -68,9 +68,9 @@ export default function ScenariosPage() {
   const minCap = Math.min(...yearData.map((d) => d.result.spendingCapacity));
   const capRange = maxCap - minCap || 1;
 
-  const capacityDelta  = selected.result.spendingCapacity - baseline.result.spendingCapacity;
+  const yearsDiff      = selected.year - targetYear; // negative = earlier, positive = later
+  const capacityDelta  = selected.result.spendingCapacity - targetData.result.spendingCapacity;
   const isPositive     = selected.result.surplusOrDeficit >= 0;
-  const yearsWorked    = selected.year - baseline.year;
 
   return (
     <div className="max-w-4xl">
@@ -158,23 +158,23 @@ export default function ScenariosPage() {
             </h2>
             {profile.spouse && (
               <p className="text-sm text-gray-500 mt-0.5">
-                {profile.spouse.name} · age {profile.spouse.age + yearsWorked}
+                {profile.spouse.name} · age {profile.spouse.age + (selected.year - profile.currentYear)}
               </p>
             )}
-            {yearsWorked > 0 && (
+            {yearsDiff !== 0 && (
               <p className="text-sm text-gray-500 mt-0.5">
-                {yearsWorked} more year{yearsWorked !== 1 ? 's' : ''} vs. retiring now
+                {Math.abs(yearsDiff)} year{Math.abs(yearsDiff) !== 1 ? 's' : ''} {yearsDiff < 0 ? 'earlier' : 'later'} than target
               </p>
             )}
           </div>
 
-          {yearsWorked > 0 && (
+          {yearsDiff !== 0 && (
             <div className={`text-right px-3 py-2 rounded-lg border ${
               capacityDelta >= 0
                 ? 'bg-green-950 border-green-800'
                 : 'bg-red-950 border-red-800'
             }`}>
-              <p className="text-xs text-gray-400 mb-0.5">vs. retire now</p>
+              <p className="text-xs text-gray-400 mb-0.5">vs. retire {targetYear}</p>
               <p className={`text-base font-bold ${capacityDelta >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                 {capacityDelta >= 0 ? '+' : ''}{formatCurrency(capacityDelta)}/yr
               </p>

@@ -64,21 +64,3 @@ export function calculateSpendingCapacity(
     lowerGuardrailSpendingCutDollars,
   };
 }
-
-export type GuardrailStatus = 'safe' | 'upper_triggered' | 'lower_triggered';
-
-export function evaluateGuardrails(
-  currentPortfolioValue: number,
-  baselinePortfolioValue: number,
-  guardrails: GuardrailConfig
-): { status: GuardrailStatus; message: string } {
-  const change = (currentPortfolioValue - baselinePortfolioValue) / baselinePortfolioValue;
-
-  if (change >= guardrails.upperGuardrailGrowthPct) {
-    return { status: 'upper_triggered', message: 'Portfolio has grown significantly — consider increasing spending.' };
-  }
-  if (change <= -guardrails.lowerGuardrailDropPct) {
-    return { status: 'lower_triggered', message: `Portfolio has dropped ${Math.round(guardrails.lowerGuardrailDropPct * 100)}% — reduce spending by ${Math.round(guardrails.lowerGuardrailSpendingCutPct * 100)}%.` };
-  }
-  return { status: 'safe', message: 'Portfolio is within guardrail bounds.' };
-}

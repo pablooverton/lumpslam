@@ -60,7 +60,7 @@ export function printScenarios(scenarios: ScenarioResult[]): void {
   const cols = [
     { label: 'Retire Now',           s: scenarios[0] },
     { label: 'Target Retire Date',   s: scenarios[1] },
-    { label: 'Work 5 More Years',    s: scenarios[2] },
+    { label: 'Work 3 More Years',    s: scenarios[2] },
   ];
 
   const W1 = 32;
