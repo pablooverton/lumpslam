@@ -12,6 +12,7 @@ import { calculateSpendingCapacity } from './spending-capacity';
 import { FEDERAL_INCOME_TAX_BRACKETS_2025 } from '../constants/tax-brackets';
 import { getAcaCliff } from '../constants/aca-thresholds';
 import { RMD_START_AGE } from '../constants/rmd-tables';
+import { getStateInfo } from '../constants/states';
 
 const DEFAULT_GROWTH_RATE = 0.07;
 
@@ -24,6 +25,9 @@ export function runSimulation(
 ): ScenarioResult {
   const growthRate = profile.annualGrowthRate ?? DEFAULT_GROWTH_RATE;
   const householdSize = profile.acaHouseholdSize ?? 2;
+  const stateRate = profile.hasStateIncomeTax
+    ? (getStateInfo(profile.stateOfResidence)?.topMarginalRate ?? 0)
+    : 0;
 
   // Resolve effective engine.
   // auto (default): conversion_primary when targetAnnualConversion is set, otherwise withdrawal_sequencing.
@@ -139,10 +143,12 @@ export function runSimulation(
     const fromHsa = Math.min(rawHealthcareCost, hsaBalance);
     const healthcareOverflow = rawHealthcareCost - fromHsa;
 
+    const oneTimeExpense = spending.oneTimeExpenses.find((e) => e.year === year)?.amount ?? 0;
     const annualSpending =
       (spending.baseAnnualSpending + travelBudget + spending.charitableGivingAnnual) * inflationFactor
       + mortgagePayment
-      + healthcareOverflow;
+      + healthcareOverflow
+      + oneTimeExpense;
 
     // Social Security income
     const ssClientMonthly =
@@ -161,8 +167,9 @@ export function runSimulation(
             profile.spouse.socialSecurityClaimAge
           )
         : 0;
-    const ssClientAnnual = ssClientMonthly * 12;
-    const ssSpouseAnnual = ssSpouseMonthly * 12;
+    // Apply COLA: SS benefits grow with inflation (COLA ≈ inflationRate)
+    const ssClientAnnual = ssClientMonthly * 12 * inflationFactor;
+    const ssSpouseAnnual = ssSpouseMonthly * 12 * inflationFactor;
     const totalSSAnnual = ssClientAnnual + ssSpouseAnnual;
 
     const rmd = clientAge >= RMD_START_AGE ? calculateRMD(pretaxBalance, clientAge) : 0;
@@ -254,11 +261,15 @@ export function runSimulation(
           ? calculateIrmaaSurcharge(magi, profile.filingStatus)
           : 0;
 
+      // State tax: most states don't tax SS; applied to non-SS income at top marginal rate
+      const stateTaxBase = Math.max(0, magi - totalSSAnnual * 0.85);
+      const stateTax = stateTaxBase * stateRate;
       const taxLiability: TaxLiability = {
         ordinaryIncomeTax: 0, // all tax is on the conversion
         capitalGainsTax: 0,
         rothConversionTax: totalTax,
         totalFederalTax: totalTax,
+        stateTax,
         effectiveRate: magi > 0 ? totalTax / magi : 0,
       };
 
@@ -363,11 +374,14 @@ export function runSimulation(
       );
       const rothConversionTax = rothConversion?.taxOnConversion ?? 0;
 
+      const stateTaxBase = Math.max(0, magi - totalSSAnnual * 0.85);
+      const stateTax = stateTaxBase * stateRate;
       const taxLiability: TaxLiability = {
         ordinaryIncomeTax,
         capitalGainsTax: 0,
         rothConversionTax,
         totalFederalTax: ordinaryIncomeTax + rothConversionTax,
+        stateTax,
         effectiveRate:
           magiWithConversion > 0
             ? (ordinaryIncomeTax + rothConversionTax) / magiWithConversion

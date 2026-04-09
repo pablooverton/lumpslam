@@ -23,6 +23,7 @@ export interface TaxLiability {
   capitalGainsTax: number;
   rothConversionTax: number;
   totalFederalTax: number;
+  stateTax: number;       // top-marginal-rate applied to non-SS income; approximation for planning
   effectiveRate: number;
 }
 

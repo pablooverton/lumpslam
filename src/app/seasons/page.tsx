@@ -70,7 +70,8 @@ export default function SeasonsPage() {
               <th className="text-right px-3 py-2.5 text-gray-400 font-medium">From Pretax</th>
               <th className="text-right px-3 py-2.5 text-gray-400 font-medium">From Brokerage</th>
               <th className="text-right px-3 py-2.5 text-gray-400 font-medium">Roth Conv.</th>
-              <th className="text-right px-3 py-2.5 text-gray-400 font-medium">Total Tax</th>
+              <th className="text-right px-3 py-2.5 text-gray-400 font-medium">Fed Tax</th>
+              <th className="text-right px-3 py-2.5 text-gray-400 font-medium">State Tax</th>
               <th className="text-right px-3 py-2.5 text-gray-400 font-medium">Portfolio End</th>
             </tr>
           </thead>
@@ -117,6 +118,9 @@ function ProjectionRow({ projection: p }: { projection: YearlyProjection }) {
         {p.rothConversion ? formatCurrency(p.rothConversion.conversionAmount) : '—'}
       </td>
       <td className="px-3 py-2 text-right text-gray-300">{formatCurrency(p.taxLiability.totalFederalTax)}</td>
+      <td className="px-3 py-2 text-right text-gray-300">
+        {p.taxLiability.stateTax > 0 ? formatCurrency(p.taxLiability.stateTax) : <span className="text-gray-600">—</span>}
+      </td>
       <td className="px-3 py-2 text-right text-gray-300">{formatCurrency(p.portfolioEndBalance, true)}</td>
     </tr>
   );

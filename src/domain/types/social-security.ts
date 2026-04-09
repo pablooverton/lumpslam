@@ -7,7 +7,8 @@ export interface SocialSecurityOption {
   lifetimeBenefitClient: number;
   lifetimeBenefitSpouse: number | null;
   lifetimeBenefitCombined: number;
-  breakEvenAgeVsEarliest: number | null; // null for earliest option
+  breakEvenAgeVsEarliest: number | null; // age at which cumulative benefits equal claiming at 62
+  isSurvivorStrategy?: boolean;           // higher earner at 70, lower earner at 62
 }
 
 export interface SocialSecurityComparison {

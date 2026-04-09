@@ -14,7 +14,7 @@ export function assessOpportunities(
     assessMicroRothConversions(profile, assets, projections),
     assessConcentratedStock(assets),
     assessCostBasisReset(assets, projections),
-    assessDonorAdvisedFund(profile),
+    assessDonorAdvisedFund(assets),
     assessQualifiedCharitableDistributions(profile, projections),
   ];
 
@@ -113,14 +113,21 @@ function assessCostBasisReset(
   };
 }
 
-function assessDonorAdvisedFund(profile: ClientProfile): OpportunityAssessment {
-  // DAF is beneficial for clients with charitable intent and appreciated assets
-  // We flag as potentially applicable; the advisor determines fit
+function assessDonorAdvisedFund(assets: AssetSnapshot): OpportunityAssessment {
+  // DAF is most powerful when you have appreciated brokerage assets AND charitable intent.
+  // Donating the shares directly avoids capital gains tax on the appreciation AND gets a
+  // deduction at full fair market value — double benefit vs. selling and donating cash.
+  const brokerageAccounts = assets.accounts.filter((a) => a.type === 'brokerage');
+  const hasAppreciatedAssets = brokerageAccounts.some(
+    (a) => a.costBasis !== undefined && a.currentBalance > 0 && a.costBasis < a.currentBalance * 0.80
+  );
   return {
     id: 'donor_advised_fund',
     label: 'Donor-Advised Fund (DAF)',
-    applicable: false, // Default to not applicable unless charitable giving is significant
-    reason: 'DAF not assessed without charitable giving details and appreciated asset inventory.',
+    applicable: hasAppreciatedAssets,
+    reason: hasAppreciatedAssets
+      ? 'You have appreciated brokerage positions. Donating shares directly to a DAF avoids capital gains tax on the gain and earns a deduction at full market value — more efficient than selling first and donating cash.'
+      : 'No significantly appreciated brokerage positions found. DAF benefit is highest when donating low-basis shares.',
     estimatedAnnualValue: null,
     estimatedLifetimeValue: null,
   };

@@ -31,12 +31,11 @@ export function calculateSpendingCapacity(
   const portfolioContribution = portfolio * baseWithdrawalRate;
   const spendingCapacity = portfolioContribution + annualSocialSecurityIncome;
 
-  // Capacity comparison uses essential spending only (matches video: "$126k desired vs $156k capacity")
-  const desiredSpending = spending.baseAnnualSpending;
-
-  // Total spending (essential + lifestyle + charitable) used for guardrail cut dollar amount
-  const totalSpending =
+  // Total planned spending (essential + active-years lifestyle + charitable)
+  // Used for surplus/deficit and guardrail calculations.
+  const desiredSpending =
     spending.baseAnnualSpending + spending.travelBudgetEarly + spending.charitableGivingAnnual;
+  const totalSpending = desiredSpending;
 
   // Portfolio-only withdrawal rate: SS covers part of spending, reducing portfolio draw
   const portfolioWithdrawalNeeded = Math.max(0, desiredSpending - annualSocialSecurityIncome);
