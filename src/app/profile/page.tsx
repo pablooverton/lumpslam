@@ -251,9 +251,9 @@ interface FormState {
   inflationRate: number;
   mortgageAnnualPayment: number;   // 0 = no mortgage
   mortgagePaidOffAge: number;      // client age at payoff
-  // Expert/advisor settings — not exposed in the form UI, preserved across demo loads
+  // Expert/advisor settings
   targetBracket?: '10%' | '12%' | '22%' | '24%' | '32%' | '35%';
-  annualContributions?: { pretax: number; roth: number; brokerage: number };
+  annualContributions: { pretax: number; roth: number; brokerage: number };
 }
 
 const BLANK_PERSON: PersonProfile = {
@@ -301,7 +301,7 @@ function buildFormState(
     mortgageAnnualPayment: spending?.mortgageAnnualPayment ?? 0,
     mortgagePaidOffAge: spending?.mortgagePaidOffAge ?? 69,
     targetBracket: profile?.targetBracket,
-    annualContributions: profile?.annualContributions,
+    annualContributions: profile?.annualContributions ?? { pretax: 0, roth: 0, brokerage: 0 },
   };
 }
 
@@ -419,7 +419,10 @@ export default function ProfilePage() {
       annualGrowthRate,
       retirementLocation,
       targetBracket: form.targetBracket,
-      annualContributions: form.annualContributions,
+      annualContributions:
+        (form.annualContributions.pretax + form.annualContributions.roth + form.annualContributions.brokerage) > 0
+          ? form.annualContributions
+          : undefined,
     };
 
     const spendingProfile: SpendingProfile = {
@@ -939,6 +942,52 @@ export default function ProfilePage() {
                 Nominal annual portfolio return assumption. Moderate (7%) is a historically reasonable long-term baseline for a diversified stock/bond portfolio.
               </p>
             </div>
+
+            {form.retirementYearDesired > form.currentYear && (
+              <div>
+                <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-1">Annual Contributions (Working Years)</p>
+                <p className="text-xs text-gray-500 mb-3 leading-relaxed">
+                  How much you add each year until retirement. Each dollar is compounded at the growth rate above across {form.retirementYearDesired - form.currentYear} working {form.retirementYearDesired - form.currentYear === 1 ? 'year' : 'years'} — leaving these at $0 significantly understates your retirement portfolio.
+                </p>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+                  <Field label="Pre-tax 401k / IRA (total household)">
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 text-sm pointer-events-none">$</span>
+                      <NumericInput
+                        value={form.annualContributions.pretax}
+                        onChange={(v) => setForm((f) => ({ ...f, annualContributions: { ...f.annualContributions, pretax: v } }))}
+                        className={inputClass + ' pl-6'}
+                      />
+                    </div>
+                  </Field>
+                  <Field label="Roth IRA — incl. backdoor (total household)">
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 text-sm pointer-events-none">$</span>
+                      <NumericInput
+                        value={form.annualContributions.roth}
+                        onChange={(v) => setForm((f) => ({ ...f, annualContributions: { ...f.annualContributions, roth: v } }))}
+                        className={inputClass + ' pl-6'}
+                      />
+                    </div>
+                  </Field>
+                  <Field label="Taxable brokerage savings">
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 text-sm pointer-events-none">$</span>
+                      <NumericInput
+                        value={form.annualContributions.brokerage}
+                        onChange={(v) => setForm((f) => ({ ...f, annualContributions: { ...f.annualContributions, brokerage: v } }))}
+                        className={inputClass + ' pl-6'}
+                      />
+                    </div>
+                  </Field>
+                </div>
+                {(form.annualContributions.pretax + form.annualContributions.roth + form.annualContributions.brokerage) > 0 && (
+                  <p className="text-xs text-gray-500 mt-2">
+                    ${((form.annualContributions.pretax + form.annualContributions.roth + form.annualContributions.brokerage) / 1_000).toFixed(1)}k/yr saved over {form.retirementYearDesired - form.currentYear} years
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </details>
 
