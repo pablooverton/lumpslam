@@ -11,6 +11,19 @@ export const STANDARD_DEDUCTION_2025 = {
   single: 15_000,
 } as const;
 
+// Return the taxable-income ceiling for a given bracket rate and filing status.
+// Used by the conversion engine to compute how much headroom remains before the next bracket.
+export function getBracketCeiling(
+  targetBracket: string,   // e.g. '22%'
+  filingStatus: 'married_filing_jointly' | 'single',
+  brackets: TaxBracket[]
+): number {
+  const rate = parseFloat(targetBracket) / 100;
+  const bracket = brackets.find(b => b.rate === rate);
+  if (!bracket) throw new Error(`Unknown bracket rate: ${targetBracket}`);
+  return filingStatus === 'married_filing_jointly' ? bracket.ceilingMFJ : bracket.ceilingSingle;
+}
+
 // 2025 federal ordinary income tax brackets
 export const FEDERAL_INCOME_TAX_BRACKETS_2025: TaxBracket[] = [
   { rate: 0.10, ceilingMFJ: 23_850,    ceilingSingle: 11_925 },

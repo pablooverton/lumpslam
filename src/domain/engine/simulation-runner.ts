@@ -9,7 +9,7 @@ import { calculateRMD, projectInheritedIraDistributions } from './rmd';
 import { calculateBenefitAtClaimAge } from './social-security';
 import { calculateOrdinaryIncomeTax, getMarginalRate } from './tax-utils';
 import { calculateSpendingCapacity } from './spending-capacity';
-import { FEDERAL_INCOME_TAX_BRACKETS_2025, STANDARD_DEDUCTION_2025 } from '../constants/tax-brackets';
+import { FEDERAL_INCOME_TAX_BRACKETS_2025, STANDARD_DEDUCTION_2025, getBracketCeiling } from '../constants/tax-brackets';
 import { getAcaCliff } from '../constants/aca-thresholds';
 import { RMD_START_AGE } from '../constants/rmd-tables';
 import { getStateInfo } from '../constants/states';
@@ -30,13 +30,13 @@ export function runSimulation(
     : 0;
 
   // Resolve effective engine.
-  // auto (default): conversion_primary when targetAnnualConversion is set, otherwise withdrawal_sequencing.
+  // auto (default): conversion_primary when targetBracket is set, otherwise withdrawal_sequencing.
   const effectiveEngine: 'withdrawal_sequencing' | 'conversion_primary' =
     profile.spendingEngine === 'conversion_primary'
       ? 'conversion_primary'
       : profile.spendingEngine === 'withdrawal_sequencing'
       ? 'withdrawal_sequencing'
-      : profile.targetAnnualConversion != null
+      : profile.targetBracket != null
       ? 'conversion_primary'
       : 'withdrawal_sequencing';
 
@@ -214,19 +214,25 @@ export function runSimulation(
       // Best for: no-brokerage, high pre-tax balance, $242k/yr engine strategies.
       // Matches the elective-conversion plan: pretax → Roth ($242k), Roth pays taxes + living.
 
-      // Inflation-index the target conversion so the REAL bracket-filling effect stays constant.
-      // Without this, a fixed nominal $242k shrinks in real terms each year while the pretax
-      // balance grows at nominal rate — causing the pretax to grow rather than deplete.
-      // Bogleheads principle: tax planning targets should be expressed in real terms.
-      const targetConv = (profile.targetAnnualConversion ?? 0) * inflationFactor;
-
-      // RMD is forced at age 73+; net conversion target is reduced so total pretax
-      // depletion = rmd + conversionAmount ≈ targetConv.
-      const conversionTarget = Math.max(0, targetConv - rmd);
+      // Bracket-ceiling conversion: fill exactly to the target bracket in real 2025 dollars.
+      // Formula: nominalMagiCapacity = (bracketCeiling + stdDeduction) × inflationFactor
+      //          conversionAmount     = nominalMagiCapacity − RMD − SS_includable − inheritedDist
+      // This automatically:
+      //   - adjusts for inflation (inflationFactor grows the nominal target each year)
+      //   - shrinks the conversion as SS phases in (SS includable eats bracket headroom)
+      //   - shrinks further as RMDs start at 73 (RMD displaces discretionary conversion)
+      const ssIncludable = totalSSAnnual * 0.85;
+      const bracketCeiling = getBracketCeiling(
+        profile.targetBracket ?? '22%',
+        profile.filingStatus,
+        FEDERAL_INCOME_TAX_BRACKETS_2025
+      );
+      const nominalMagiCapacity = (bracketCeiling + stdDeduction) * inflationFactor;
+      const conversionTarget = Math.max(0, nominalMagiCapacity - rmd - ssIncludable - inheritedDist);
       const conversionAmount = Math.min(conversionTarget, pretaxBalance);
 
       // MAGI = conversion + RMD + SS (85% includable) + inherited IRA distributions
-      const magiBase = conversionAmount + rmd + totalSSAnnual * 0.85 + inheritedDist;
+      const magiBase = conversionAmount + rmd + ssIncludable + inheritedDist;
 
       // Deflate nominal MAGI to 2025 real dollars, subtract standard deduction, calculate
       // tax in real terms, then scale back to nominal. Models IRS bracket inflation-indexing.
@@ -376,7 +382,7 @@ export function runSimulation(
         rothConversion = calculateRothConversion({
           currentMAGI: magi,
           surplusSpendingCapacity: Math.max(0, surplus),
-          targetAmount: profile.targetAnnualConversion,
+          targetAmount: undefined,
           pretaxBalance,
           brokerageBalance,
           filingStatus: profile.filingStatus,

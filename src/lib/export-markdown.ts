@@ -66,8 +66,8 @@ export function buildMarkdownExport(params: {
   lines.push(`| COBRA Months | ${profile.cobraMonths} |`);
   lines.push(`| ACA Household Size | ${profile.acaHouseholdSize ?? 2} |`);
   lines.push(`| Annual Growth Rate | ${((profile.annualGrowthRate ?? 0.07) * 100).toFixed(1)}% nominal |`);
-  if (profile.targetAnnualConversion) {
-    lines.push(`| Target Annual Roth Conversion | ${cur(profile.targetAnnualConversion)} |`);
+  if (profile.targetBracket) {
+    lines.push(`| Target Conversion Bracket | Fill to ${profile.targetBracket} ceiling |`);
   }
   lines.push(`| Spending Engine | ${profile.spendingEngine ?? 'auto'} |`);
   lines.push('');

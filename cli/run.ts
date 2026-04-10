@@ -112,12 +112,13 @@ interface ProfileInput {
   annualGrowthRate?: number;
   /** "us" | "international". International skips ACA season (no cliff). Default: "us" */
   retirementLocation?: 'us' | 'international';
-  /** If set, drives Roth conversion by target amount (e.g. 242000) rather than surplus.
-   *  Useful for conversion-centric strategies. */
-  targetAnnualConversion?: number;
-  /** Engine selection. "auto" (default): picks conversion_primary when targetAnnualConversion is set.
+  /** Target federal bracket to fill via Roth conversion each year.
+   *  Engine computes conversion = (bracketCeiling + stdDeduction) × inflationFactor − RMD − SS.
+   *  Automatically selects conversion_primary engine. Omit for surplus-driven conversions. */
+  targetBracket?: '10%' | '12%' | '22%' | '24%' | '32%' | '35%';
+  /** Engine selection. "auto" (default): picks conversion_primary when targetBracket is set.
    *  "withdrawal_sequencing": draw accounts to cover spending, convert surplus to Roth.
-   *  "conversion_primary": convert targetAnnualConversion first; Roth pays taxes + spending. */
+   *  "conversion_primary": fill targetBracket from pretax; Roth pays taxes + spending. */
   spendingEngine?: 'withdrawal_sequencing' | 'conversion_primary' | 'auto';
   /** Annual contributions during accumulation (working) years. Added each year before growth.
    *  Omit if already retired. Typical: pretax=$46k (2×401k), roth=$14k (2× backdoor Roth). */
@@ -195,7 +196,7 @@ function loadProfile(filePath: string): {
     acaHouseholdSize: input.acaHouseholdSize,
     annualGrowthRate: input.annualGrowthRate != null ? input.annualGrowthRate / 100 : undefined,
     retirementLocation: input.retirementLocation,
-    targetAnnualConversion: input.targetAnnualConversion,
+    targetBracket: input.targetBracket,
     spendingEngine: input.spendingEngine,
     annualContributions,
   };

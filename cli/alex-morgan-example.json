@@ -32,7 +32,7 @@
   "acaHouseholdSize": 4,
   "annualGrowthRate": 9,
   "retirementLocation": "international",
-  "targetAnnualConversion": 242000,
+  "targetBracket": "22%",
   "annualContributions": {
     "_comment": "Combined household: 2×401k ($23k each) + 2× backdoor Roth ($7k each)",
     "pretax": 46000,

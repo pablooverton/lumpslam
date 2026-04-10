@@ -137,6 +137,7 @@ const DEMOS: DemoEntry[] = [
       currentYear: 2026, retirementYearDesired: 2026,
       cobraMonths: 0, acaHouseholdSize: 2,
       retirementLocation: 'international',
+      targetBracket: '22%' as const,
     },
     accounts: [
       { id: '1', label: "Carlos's IRA",  owner: 'client', type: 'pretax_ira', currentBalance: 1_400_000 },
@@ -183,6 +184,44 @@ const DEMOS: DemoEntry[] = [
       inflationRate: 0.03,
     },
   },
+
+  // ── 6. Alex & Morgan — Long-Horizon Accumulation + International ───────────
+  {
+    key: 'alex-morgan',
+    label: 'Alex & Morgan',
+    tag: 'Ages 41 & 38, retiring abroad 2041 — 15-yr accumulation, bracket-filling conversions',
+    situation: 'Ages 41 & 38, retiring internationally in 2041. 15 working years of 401k + backdoor Roth contributions compound to ~$5M before retirement. No ACA cliff means conversions fill the 22% bracket freely from day one. Roth balance grows while pretax depletes gradually.',
+    profile: {
+      client: { name: 'Alex',   age: 41, birthYear: 1985, lifeExpectancy: 90, fullRetirementAge: 67, fraMonthlyBenefit: 2_750, socialSecurityClaimAge: 62 },
+      spouse:  { name: 'Morgan', age: 38, birthYear: 1988, lifeExpectancy: 95, fullRetirementAge: 67, fraMonthlyBenefit: 2_600, socialSecurityClaimAge: 62 },
+      filingStatus: 'married_filing_jointly',
+      stateOfResidence: 'VA', hasStateIncomeTax: true,
+      currentYear: 2026, retirementYearDesired: 2041,
+      cobraMonths: 0, acaHouseholdSize: 4,
+      retirementLocation: 'international',
+      targetBracket: '22%' as const,
+      annualContributions: { pretax: 46_000, roth: 14_000, brokerage: 0 },
+    },
+    accounts: [
+      { id: '1', label: "Alex's 401k",    owner: 'client', type: 'pretax_ira', currentBalance: 485_000 },
+      { id: '2', label: "Morgan's 401k",  owner: 'spouse', type: 'pretax_ira', currentBalance: 255_000 },
+      { id: '3', label: "Alex's Roth",    owner: 'client', type: 'roth_ira',   currentBalance:  88_000 },
+      { id: '4', label: "Morgan's Roth",  owner: 'spouse', type: 'roth_ira',   currentBalance:  51_000 },
+      { id: '5', label: 'Taxable Brokerage', owner: 'joint', type: 'brokerage', currentBalance: 5_000, costBasis: 5_000 },
+      { id: '6', label: 'HSA',            owner: 'client', type: 'hsa',        currentBalance:  28_000 },
+    ],
+    homeEquity: 115_000,
+    spending: {
+      baseAnnualSpending: 118_000,
+      travelBudgetEarly: 8_000, travelBudgetLate: 4_000, travelTaperStartAge: 75,
+      charitableGivingAnnual: 0,
+      oneTimeExpenses: [],
+      inflationRate: 0.03,
+      mortgageAnnualPayment: 46_200,
+      mortgagePaidOffAge: 68,
+      annualHealthcareCost: 15_000,
+    },
+  },
 ];
 
 // ─── Form state ───────────────────────────────────────────────────────────────
@@ -212,6 +251,9 @@ interface FormState {
   inflationRate: number;
   mortgageAnnualPayment: number;   // 0 = no mortgage
   mortgagePaidOffAge: number;      // client age at payoff
+  // Expert/advisor settings — not exposed in the form UI, preserved across demo loads
+  targetBracket?: '10%' | '12%' | '22%' | '24%' | '32%' | '35%';
+  annualContributions?: { pretax: number; roth: number; brokerage: number };
 }
 
 const BLANK_PERSON: PersonProfile = {
@@ -258,6 +300,8 @@ function buildFormState(
     inflationRate: spending?.inflationRate ?? 0.03,
     mortgageAnnualPayment: spending?.mortgageAnnualPayment ?? 0,
     mortgagePaidOffAge: spending?.mortgagePaidOffAge ?? 69,
+    targetBracket: profile?.targetBracket,
+    annualContributions: profile?.annualContributions,
   };
 }
 
@@ -374,6 +418,8 @@ export default function ProfilePage() {
       acaHouseholdSize,
       annualGrowthRate,
       retirementLocation,
+      targetBracket: form.targetBracket,
+      annualContributions: form.annualContributions,
     };
 
     const spendingProfile: SpendingProfile = {
