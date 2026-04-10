@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ScenarioResult } from '@/domain/types/scenarios';
+import type { ScenarioResult, ScenarioType } from '@/domain/types/scenarios';
 import type { SocialSecurityComparison } from '@/domain/types/social-security';
 import type { OpportunityReport } from '@/domain/types/opportunities';
 import type { ContingencyReport } from '@/domain/types/contingency';
@@ -13,7 +13,10 @@ interface SimulationStore {
   scenarios: ScenarioResult[];
   ssComparison: SocialSecurityComparison | null;
   opportunities: OpportunityReport | null;
-  contingency: ContingencyReport | null;
+  // Contingency is computed for all three scenarios so pages can switch without re-running.
+  contingencies: Partial<Record<ScenarioType, ContingencyReport>>;
+  selectedScenarioType: ScenarioType;
+  setSelectedScenarioType: (type: ScenarioType) => void;
   isStale: boolean;
   isRunning: boolean;
   runSimulations: () => void;
@@ -24,11 +27,14 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   scenarios: [],
   ssComparison: null,
   opportunities: null,
-  contingency: null,
+  contingencies: {},
+  selectedScenarioType: 'retire_at_stated_date',
   isStale: true,
   isRunning: false,
 
   markStale: () => set({ isStale: true }),
+
+  setSelectedScenarioType: (type) => set({ selectedScenarioType: type }),
 
   runSimulations: () => {
     const { profile, assets, spending, guardrails } = useProfileStore.getState();
@@ -36,9 +42,9 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
 
     set({ isRunning: true });
 
-    const retireNow = runSimulation(profile, assets, spending, guardrails, 'retire_now');
+    const retireNow    = runSimulation(profile, assets, spending, guardrails, 'retire_now');
     const retireStated = runSimulation(profile, assets, spending, guardrails, 'retire_at_stated_date');
-    const noChange = runSimulation(profile, assets, spending, guardrails, 'no_change');
+    const noChange     = runSimulation(profile, assets, spending, guardrails, 'no_change');
 
     const ssComparison = buildSocialSecurityComparison(
       profile.client.fraMonthlyBenefit,
@@ -51,19 +57,19 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
 
     const opportunities = assessOpportunities(profile, assets, retireNow.yearlyProjections);
 
-    const contingency = buildContingencyReport(
-      profile,
-      assets,
-      guardrails,
-      retireNow,
-      ssComparison
-    );
+    // Compute contingency for all three scenarios — different retirement dates mean
+    // different portfolio sizes, which affects survivor coverage and guardrail amounts.
+    const contingencies: Partial<Record<ScenarioType, ContingencyReport>> = {
+      retire_now:             buildContingencyReport(profile, assets, guardrails, retireNow,    ssComparison),
+      retire_at_stated_date:  buildContingencyReport(profile, assets, guardrails, retireStated, ssComparison),
+      no_change:              buildContingencyReport(profile, assets, guardrails, noChange,      ssComparison),
+    };
 
     set({
       scenarios: [retireNow, retireStated, noChange],
       ssComparison,
       opportunities,
-      contingency,
+      contingencies,
       isStale: false,
       isRunning: false,
     });

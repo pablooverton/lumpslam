@@ -3,12 +3,13 @@
 import { useSimulationStore } from '@/store/simulation.store';
 import { useProfileStore } from '@/store/profile.store';
 import { formatCurrency, formatPercent } from '@/lib/format';
+import { ScenarioSelector } from '@/components/ScenarioSelector';
 import Link from 'next/link';
 
 export default function RothPage() {
-  const { scenarios } = useSimulationStore();
+  const { scenarios, selectedScenarioType } = useSimulationStore();
   const { profile, assets } = useProfileStore();
-  const retireStated = scenarios.find((s) => s.scenarioType === 'retire_at_stated_date');
+  const retireStated = scenarios.find((s) => s.scenarioType === selectedScenarioType);
 
   if (!retireStated || !profile || !assets) {
     return (
@@ -33,7 +34,10 @@ export default function RothPage() {
 
   return (
     <div className="max-w-4xl">
-      <h1 className="text-2xl font-bold text-white mb-2">Roth Conversion Engine</h1>
+      <div className="flex items-start justify-between mb-1">
+        <h1 className="text-2xl font-bold text-white">Roth Conversion Engine</h1>
+        <ScenarioSelector />
+      </div>
       <p className="text-gray-400 text-sm mb-6">
         Two-event model: living expense withdrawal (Event 1) vs. surplus-funded conversion with
         brokerage-funded tax (Event 2).

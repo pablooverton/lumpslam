@@ -205,7 +205,27 @@ export default function ScenariosPage() {
         </div>
       </div>
 
-      <p className="text-xs text-gray-600 leading-relaxed">
+      <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 mt-4">
+        <p className="text-xs font-semibold text-gray-400 mb-2">How to read Probability of Success</p>
+        <p className="text-xs text-gray-500 leading-relaxed mb-2">
+          This is <strong className="text-gray-300">not a Monte Carlo simulation.</strong> It is a historical
+          heuristic: the Safe Withdrawal Rate (SWR) is set at 4.5% for retirements under 30 years, 4.0% for
+          30–35 years, and 3.8% beyond 35 years — rates derived from historical US market data. The probability
+          is an estimate of how often a similar strategy would have survived over rolling 30-year periods in
+          history.
+        </p>
+        <p className="text-xs text-gray-500 leading-relaxed mb-2">
+          <span className="text-green-400 font-medium">≥ 90%</span> — solid.{' '}
+          <span className="text-yellow-400 font-medium">70–89%</span> — workable with guardrails active.{' '}
+          <span className="text-red-400 font-medium">&lt; 70%</span> — consider working longer or reducing spending.
+        </p>
+        <p className="text-xs text-gray-500 leading-relaxed">
+          If the portfolio depletes before Social Security begins, the probability is capped — the tool penalizes
+          plans that require SS to rescue a failing portfolio. A 99% target is overly conservative for most
+          plans; 85–95% with guardrails is the typical advisor range.
+        </p>
+      </div>
+      <p className="text-xs text-gray-600 leading-relaxed mt-3">
         Guardrail: a 3% monthly spending cut triggers only if the portfolio drops 29% from its starting value.
         All projections inflate spending at {((spending.inflationRate ?? 0.03) * 100).toFixed(0)}%/yr.
       </p>

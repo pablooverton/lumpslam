@@ -4,6 +4,7 @@ import { useSimulationStore } from '@/store/simulation.store';
 import { useProfileStore } from '@/store/profile.store';
 import { formatCurrency } from '@/lib/format';
 import { PortfolioChart } from '@/components/PortfolioChart';
+import { ScenarioSelector } from '@/components/ScenarioSelector';
 import type { YearlyProjection, RetirementSeason } from '@/domain/types/simulation';
 import Link from 'next/link';
 
@@ -79,9 +80,9 @@ function buildPhaseSummaries(projections: YearlyProjection[]): PhaseSummary[] {
 // ── Page ────────────────────────────────────────────────────────────────────
 
 export default function SeasonsPage() {
-  const { scenarios } = useSimulationStore();
+  const { scenarios, selectedScenarioType } = useSimulationStore();
   const { profile } = useProfileStore();
-  const retireStated = scenarios.find((s) => s.scenarioType === 'retire_at_stated_date');
+  const retireStated = scenarios.find((s) => s.scenarioType === selectedScenarioType);
 
   if (!profile || !retireStated) {
     return (
@@ -100,7 +101,10 @@ export default function SeasonsPage() {
 
   return (
     <div className="max-w-6xl">
-      <h1 className="text-2xl font-bold text-white mb-1">Four Seasons Strategy</h1>
+      <div className="flex items-start justify-between mb-1">
+        <h1 className="text-2xl font-bold text-white">Four Seasons Strategy</h1>
+        <ScenarioSelector />
+      </div>
       <p className="text-gray-400 text-sm mb-6">
         Year-by-year withdrawal sequencing and tax management across all four retirement phases.
       </p>

@@ -3,6 +3,7 @@
 import { useSimulationStore } from '@/store/simulation.store';
 import { useProfileStore } from '@/store/profile.store';
 import { formatCurrency, formatPercent } from '@/lib/format';
+import { ScenarioSelector } from '@/components/ScenarioSelector';
 import Link from 'next/link';
 
 const LIKELIHOOD_COLOR: Record<string, string> = {
@@ -12,8 +13,9 @@ const LIKELIHOOD_COLOR: Record<string, string> = {
 };
 
 export default function ContingencyPage() {
-  const { contingency } = useSimulationStore();
+  const { contingencies, selectedScenarioType } = useSimulationStore();
   const { profile } = useProfileStore();
+  const contingency = contingencies[selectedScenarioType];
 
   if (!contingency || !profile) {
     return (
@@ -30,7 +32,10 @@ export default function ContingencyPage() {
 
   return (
     <div className="max-w-3xl">
-      <h1 className="text-2xl font-bold text-white mb-2">Contingency Planning</h1>
+      <div className="flex items-start justify-between mb-1">
+        <h1 className="text-2xl font-bold text-white">Contingency Planning</h1>
+        <ScenarioSelector />
+      </div>
       <p className="text-gray-400 text-sm mb-6">
         Six great risks, modeled. Plus the widow's tax penalty.
       </p>
