@@ -8,6 +8,12 @@ export interface PersonProfile {
   socialSecurityClaimAge: number;
 }
 
+export interface AnnualContributions {
+  pretax: number;    // 401k / traditional IRA contributions per year (combined household)
+  roth: number;      // Roth IRA (including backdoor Roth) per year (combined household)
+  brokerage: number; // taxable brokerage savings per year
+}
+
 export interface ClientProfile {
   client: PersonProfile;
   spouse: PersonProfile | null;
@@ -29,4 +35,5 @@ export interface ClientProfile {
   //   MAGI = conversion only (not spending draws). Best for: no-brokerage, high pre-tax balance,
   //   $242k/yr conversion engine strategies (elective-conversion archetype).
   // auto: picks conversion_primary when targetAnnualConversion is set; otherwise withdrawal_sequencing.
+  annualContributions?: AnnualContributions; // annual savings added each year during accumulation phase
 }

@@ -135,12 +135,11 @@ export function printSeasons(projections: YearlyProjection[], years = 30): void 
     { h: 'Year',     w: 6,  rj: false },
     { h: 'Age',      w: 5,  rj: true  },
     { h: 'Season',   w: 10, rj: false },
-    { h: 'MAGI',     w: 12, rj: true  },
-    { h: 'ACA',      w: 5,  rj: true  },
-    { h: 'Pretax',   w: 12, rj: true  },
-    { h: 'Brokerage',w: 12, rj: true  },
+    { h: 'SS Income',w: 11, rj: true  },
     { h: 'Roth Conv',w: 11, rj: true  },
-    { h: 'Fed Tax',  w: 11, rj: true  },
+    { h: 'Fed Tax',  w: 10, rj: true  },
+    { h: 'Pretax Bal',w: 12, rj: true },
+    { h: 'Roth Bal', w: 12, rj: true  },
     { h: 'Portfolio',w: 12, rj: true  },
   ];
 
@@ -152,32 +151,35 @@ export function printSeasons(projections: YearlyProjection[], years = 30): void 
   for (const p of rows) {
     const sc = SEASON_COLOR[p.season];
     const seasonStr = `${sc}${SEASON_LABEL[p.season]}${RS}`;
+    const ssTotal = p.income.socialSecurityClient + p.income.socialSecuritySpouse;
 
     const cells = [
-      pad(p.year,       cols[0].w, cols[0].rj),
-      pad(p.clientAge,  cols[1].w, cols[1].rj),
+      pad(p.year,      cols[0].w, false),
+      pad(p.clientAge, cols[1].w, true),
       seasonStr,
-      pad(usd(p.magi, true),                   cols[3].w, true),
-      p.acaSubsidyEligible ? `${G}${pad('✓', cols[4].w, true)}${RS}` : pad('', cols[4].w),
-      pad(usd(p.withdrawals.fromPretax, true),  cols[5].w, true),
-      pad(usd(p.withdrawals.fromBrokerage, true),cols[6].w, true),
+      ssTotal > 0
+        ? `${G}${pad(usd(ssTotal, true), cols[3].w, true)}${RS}`
+        : `${DIM}${pad('—', cols[3].w, true)}${RS}`,
       p.rothConversion
-        ? `${G}${pad(usd(p.rothConversion.conversionAmount, true), cols[7].w, true)}${RS}`
-        : pad('—', cols[7].w, true),
-      pad(usd(p.taxLiability.totalFederalTax, true), cols[8].w, true),
-      pad(usd(p.portfolioEndBalance, true),     cols[9].w, true),
+        ? `${G}${pad(usd(p.rothConversion.conversionAmount, true), cols[4].w, true)}${RS}`
+        : `${DIM}${pad('—', cols[4].w, true)}${RS}`,
+      pad(usd(p.taxLiability.totalFederalTax, true), cols[5].w, true),
+      `\x1b[33m${pad(usd(p.pretaxEndBalance, true), cols[6].w, true)}${RS}`,
+      `${G}${pad(usd(p.rothEndBalance, true), cols[7].w, true)}${RS}`,
+      `${B}${pad(usd(p.portfolioEndBalance, true), cols[8].w, true)}${RS}`,
     ];
 
-    // Re-join with spacing manually (season cell has ANSI codes that throw off padding)
+    // Re-join manually (season cell has ANSI codes that throw off padding)
     const line =
       cells[0] + ' ' + cells[1] + ' ' + cells[2] + ' ' +
       cells[3] + ' ' + cells[4] + ' ' + cells[5] + ' ' +
-      cells[6] + ' ' + cells[7] + ' ' + cells[8] + ' ' + cells[9];
+      cells[6] + ' ' + cells[7] + ' ' + cells[8];
 
     console.log('  ' + line);
   }
 
   console.log();
+  console.log(`  ${DIM}Pretax Bal (amber) depletes via conversions. Roth Bal (green) accumulates.${RS}`);
   console.log(`  ${DIM}Showing first ${rows.length} years. Use: seasons <N> to change.${RS}\n`);
 }
 

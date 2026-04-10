@@ -8,9 +8,9 @@ import Link from 'next/link';
 export default function RothPage() {
   const { scenarios } = useSimulationStore();
   const { profile, assets } = useProfileStore();
-  const retireNow = scenarios.find((s) => s.scenarioType === 'retire_now');
+  const retireStated = scenarios.find((s) => s.scenarioType === 'retire_at_stated_date');
 
-  if (!retireNow || !profile || !assets) {
+  if (!retireStated || !profile || !assets) {
     return (
       <div className="max-w-xl">
         <h1 className="text-2xl font-bold text-white mb-4">Roth Conversion Engine</h1>
@@ -21,7 +21,7 @@ export default function RothPage() {
     );
   }
 
-  const conversionYears = retireNow.yearlyProjections.filter((p) => p.rothConversion !== null);
+  const conversionYears = retireStated.yearlyProjections.filter((p) => p.rothConversion !== null);
   const totalConverted = conversionYears.reduce(
     (s, p) => s + (p.rothConversion?.conversionAmount ?? 0),
     0

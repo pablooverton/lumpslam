@@ -4,6 +4,13 @@ export interface TaxBracket {
   ceilingSingle: number;
 }
 
+// Standard deduction (2025). Applied before bracket calculation.
+// IRS indexes these to inflation, so they represent "real" 2025 amounts.
+export const STANDARD_DEDUCTION_2025 = {
+  married_filing_jointly: 30_000,
+  single: 15_000,
+} as const;
+
 // 2025 federal ordinary income tax brackets
 export const FEDERAL_INCOME_TAX_BRACKETS_2025: TaxBracket[] = [
   { rate: 0.10, ceilingMFJ: 23_850,    ceilingSingle: 11_925 },

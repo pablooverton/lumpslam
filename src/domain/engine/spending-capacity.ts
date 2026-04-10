@@ -31,14 +31,13 @@ export function calculateSpendingCapacity(
   const portfolioContribution = portfolio * baseWithdrawalRate;
   const spendingCapacity = portfolioContribution + annualSocialSecurityIncome;
 
-  // Total planned spending (essential + active-years lifestyle + charitable)
-  // Used for surplus/deficit and guardrail calculations.
-  const desiredSpending =
-    spending.baseAnnualSpending + spending.travelBudgetEarly + spending.charitableGivingAnnual;
-  const totalSpending = desiredSpending;
+  // Surplus/deficit and probability are computed against ESSENTIAL spending only.
+  // Travel, charitable, and mortgage are modeled year-by-year in the projection loop.
+  // This matches the reference model: "can the portfolio sustain the floor?"
+  const essentialSpending = spending.baseAnnualSpending;
 
-  // Portfolio-only withdrawal rate: SS covers part of spending, reducing portfolio draw
-  const portfolioWithdrawalNeeded = Math.max(0, desiredSpending - annualSocialSecurityIncome);
+  // Portfolio-only withdrawal rate: SS covers part of essential, reducing portfolio draw
+  const portfolioWithdrawalNeeded = Math.max(0, essentialSpending - annualSocialSecurityIncome);
   const withdrawalRate = portfolio > 0 ? portfolioWithdrawalNeeded / portfolio : 0;
 
   // Heuristic probability: 95% at 3.5% WR, declining toward 65% at 5.5% WR
@@ -47,11 +46,12 @@ export function calculateSpendingCapacity(
     Math.min(0.99, 0.95 - (withdrawalRate - 0.035) * 15)
   );
 
-  const surplusOrDeficit = spendingCapacity - desiredSpending;
+  const surplusOrDeficit = spendingCapacity - essentialSpending;
 
   // Lower guardrail: portfolio drop that triggers a spending cut
   const lowerGuardrailDollarDrop = portfolio * guardrails.lowerGuardrailDropPct;
-  // Spending cut applies to TOTAL spending (essential + lifestyle + charitable)
+  // Spending cut applies to total spending (essential + lifestyle + charitable)
+  const totalSpending = spending.baseAnnualSpending + spending.travelBudgetEarly + spending.charitableGivingAnnual;
   const lowerGuardrailSpendingCutDollars =
     (totalSpending * guardrails.lowerGuardrailSpendingCutPct) / 12; // monthly
 

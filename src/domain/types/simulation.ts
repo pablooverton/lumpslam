@@ -46,6 +46,10 @@ export interface YearlyProjection {
   taxLiability: TaxLiability;
   portfolioStartBalance: number;
   portfolioEndBalance: number;
+  // Per-account end balances (for charting the conversion trajectory)
+  pretaxEndBalance: number;
+  rothEndBalance: number;
+  brokerageEndBalance: number;
   magi: number;
   acaSubsidyEligible: boolean;
   estimatedAcaSavings: number;

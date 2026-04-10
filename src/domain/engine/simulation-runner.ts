@@ -9,7 +9,7 @@ import { calculateRMD, projectInheritedIraDistributions } from './rmd';
 import { calculateBenefitAtClaimAge } from './social-security';
 import { calculateOrdinaryIncomeTax, getMarginalRate } from './tax-utils';
 import { calculateSpendingCapacity } from './spending-capacity';
-import { FEDERAL_INCOME_TAX_BRACKETS_2025 } from '../constants/tax-brackets';
+import { FEDERAL_INCOME_TAX_BRACKETS_2025, STANDARD_DEDUCTION_2025 } from '../constants/tax-brackets';
 import { getAcaCliff } from '../constants/aca-thresholds';
 import { RMD_START_AGE } from '../constants/rmd-tables';
 import { getStateInfo } from '../constants/states';
@@ -59,13 +59,24 @@ export function runSimulation(
 
   const yearsInRetirement = endYear - retirementYear;
   const workingYears = Math.max(0, retirementYear - profile.currentYear);
-  const growthFactor = Math.pow(1 + growthRate, workingYears);
 
-  let pretaxBalance = assets.totalPretax * growthFactor;
-  let rothBalance = assets.totalRoth * growthFactor;
-  let brokerageBalance = assets.totalBrokerage * growthFactor;
-  let inheritedIraBalance = assets.totalInheritedIra * growthFactor;
-  let hsaBalance = assets.totalHsa * growthFactor;
+  // Accumulation phase: grow balances year-by-year, adding annual contributions each year.
+  // This models the reality of ongoing 401k/Roth/brokerage deposits during working years.
+  // Without contributions, the engine only compounds current balances — understating retirement assets.
+  const contrib = profile.annualContributions;
+  let pretaxBalance = assets.totalPretax;
+  let rothBalance = assets.totalRoth;
+  let brokerageBalance = assets.totalBrokerage;
+  let inheritedIraBalance = assets.totalInheritedIra;
+  let hsaBalance = assets.totalHsa;
+
+  for (let y = 0; y < workingYears; y++) {
+    pretaxBalance    = (pretaxBalance    + (contrib?.pretax    ?? 0)) * (1 + growthRate);
+    rothBalance      = (rothBalance      + (contrib?.roth      ?? 0)) * (1 + growthRate);
+    brokerageBalance = (brokerageBalance + (contrib?.brokerage ?? 0)) * (1 + growthRate);
+    inheritedIraBalance = inheritedIraBalance * (1 + growthRate);
+    hsaBalance          = hsaBalance          * (1 + growthRate);
+  }
 
   const clientSSMonthly = calculateBenefitAtClaimAge(
     profile.client.fraMonthlyBenefit,
@@ -98,8 +109,11 @@ export function runSimulation(
     projectedAnnualSS
   );
 
+  // Desired spending = essential base only (matches the advisor reference model).
+  // Mortgage, travel, and charitable are modeled year-by-year in the projection loop.
   const desiredSpending = spending.baseAnnualSpending;
   const yearlyProjections: YearlyProjection[] = [];
+  const stdDeduction = STANDARD_DEDUCTION_2025[profile.filingStatus];
 
   const inheritedAccount = assets.accounts.find((a) => a.type === 'inherited_ira');
   const originalRemainingYears = inheritedAccount?.inheritedIraRemainingYears ?? 10;
@@ -167,9 +181,11 @@ export function runSimulation(
             profile.spouse.socialSecurityClaimAge
           )
         : 0;
-    // Apply COLA: SS benefits grow with inflation (COLA ≈ inflationRate)
-    const ssClientAnnual = ssClientMonthly * 12 * inflationFactor;
-    const ssSpouseAnnual = ssSpouseMonthly * 12 * inflationFactor;
+    // SS kept at nominal claim-age amount (no automatic COLA applied).
+    // Conservative: real purchasing power of SS declines with inflation.
+    // Matches the reference video model and is appropriate for stress-testing.
+    const ssClientAnnual = ssClientMonthly * 12;
+    const ssSpouseAnnual = ssSpouseMonthly * 12;
     const totalSSAnnual = ssClientAnnual + ssSpouseAnnual;
 
     const rmd = clientAge >= RMD_START_AGE ? calculateRMD(pretaxBalance, clientAge) : 0;
@@ -198,7 +214,11 @@ export function runSimulation(
       // Best for: no-brokerage, high pre-tax balance, $242k/yr engine strategies.
       // Matches the elective-conversion plan: pretax → Roth ($242k), Roth pays taxes + living.
 
-      const targetConv = profile.targetAnnualConversion ?? 0;
+      // Inflation-index the target conversion so the REAL bracket-filling effect stays constant.
+      // Without this, a fixed nominal $242k shrinks in real terms each year while the pretax
+      // balance grows at nominal rate — causing the pretax to grow rather than deplete.
+      // Bogleheads principle: tax planning targets should be expressed in real terms.
+      const targetConv = (profile.targetAnnualConversion ?? 0) * inflationFactor;
 
       // RMD is forced at age 73+; net conversion target is reduced so total pretax
       // depletion = rmd + conversionAmount ≈ targetConv.
@@ -208,9 +228,13 @@ export function runSimulation(
       // MAGI = conversion + RMD + SS (85% includable) + inherited IRA distributions
       const magiBase = conversionAmount + rmd + totalSSAnnual * 0.85 + inheritedDist;
 
-      // Total income tax on this MAGI (covers both conversion tax and SS/RMD tax)
-      const totalTax = calculateOrdinaryIncomeTax(magiBase, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025);
-      const marginalRate = getMarginalRate(magiBase, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025);
+      // Deflate nominal MAGI to 2025 real dollars, subtract standard deduction, calculate
+      // tax in real terms, then scale back to nominal. Models IRS bracket inflation-indexing.
+      const realMagi = magiBase / inflationFactor;
+      const realTaxableIncome = Math.max(0, realMagi - stdDeduction);
+      const realTax = calculateOrdinaryIncomeTax(realTaxableIncome, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025);
+      const totalTax = realTax * inflationFactor;
+      const marginalRate = getMarginalRate(realTaxableIncome, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025);
 
       // Roth funds spending net of SS income (SS directly offsets spending needs)
       const rothSpendingDraw = Math.max(0, annualSpending - totalSSAnnual);
@@ -284,6 +308,9 @@ export function runSimulation(
         taxLiability,
         portfolioStartBalance: portfolioStart,
         portfolioEndBalance: portfolioEnd,
+        pretaxEndBalance: pretaxBalance,
+        rothEndBalance: rothBalance,
+        brokerageEndBalance: brokerageBalance,
         magi,
         acaSubsidyEligible: acaResult?.eligible ?? false,
         estimatedAcaSavings: acaResult?.estimatedAnnualSavings ?? 0,
@@ -367,11 +394,14 @@ export function runSimulation(
           ? calculateIrmaaSurcharge(magiWithConversion, profile.filingStatus)
           : 0;
 
+      // Deflate to 2025 real dollars, subtract standard deduction, scale tax back to nominal.
+      const realMagiWC = magiWithConversion / inflationFactor;
+      const realTaxableWC = Math.max(0, realMagiWC - stdDeduction);
       const ordinaryIncomeTax = calculateOrdinaryIncomeTax(
-        magiWithConversion,
+        realTaxableWC,
         profile.filingStatus,
         FEDERAL_INCOME_TAX_BRACKETS_2025
-      );
+      ) * inflationFactor;
       const rothConversionTax = rothConversion?.taxOnConversion ?? 0;
 
       const stateTaxBase = Math.max(0, magi - totalSSAnnual * 0.85);
@@ -431,6 +461,9 @@ export function runSimulation(
         taxLiability,
         portfolioStartBalance: portfolioStart,
         portfolioEndBalance: portfolioEnd,
+        pretaxEndBalance: pretaxBalance,
+        rothEndBalance: rothBalance,
+        brokerageEndBalance: brokerageBalance,
         magi,
         acaSubsidyEligible: acaResult?.eligible ?? false,
         estimatedAcaSavings: acaResult?.estimatedAnnualSavings ?? 0,

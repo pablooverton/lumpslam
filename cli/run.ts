@@ -23,7 +23,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { deriveAssetTotals } from '../src/domain/types/assets';
-import type { ClientProfile, PersonProfile } from '../src/domain/types/profile';
+import type { ClientProfile, PersonProfile, AnnualContributions } from '../src/domain/types/profile';
 import type { Account } from '../src/domain/types/assets';
 import type { SpendingProfile, OneTimeExpense } from '../src/domain/types/spending';
 import type { GuardrailConfig } from '../src/domain/types/scenarios';
@@ -119,6 +119,13 @@ interface ProfileInput {
    *  "withdrawal_sequencing": draw accounts to cover spending, convert surplus to Roth.
    *  "conversion_primary": convert targetAnnualConversion first; Roth pays taxes + spending. */
   spendingEngine?: 'withdrawal_sequencing' | 'conversion_primary' | 'auto';
+  /** Annual contributions during accumulation (working) years. Added each year before growth.
+   *  Omit if already retired. Typical: pretax=$46k (2×401k), roth=$14k (2× backdoor Roth). */
+  annualContributions?: {
+    pretax: number;
+    roth: number;
+    brokerage: number;
+  };
   accounts: AccountInput[];
   /** Home equity — non-liquid, for reference only */
   homeEquity?: number;
@@ -166,6 +173,14 @@ function loadProfile(filePath: string): {
 
   const stateInfo = getStateInfo(input.state);
 
+  const annualContributions: AnnualContributions | undefined = input.annualContributions
+    ? {
+        pretax: input.annualContributions.pretax,
+        roth: input.annualContributions.roth,
+        brokerage: input.annualContributions.brokerage,
+      }
+    : undefined;
+
   const profile: ClientProfile = {
     client: mapPerson(input.client),
     spouse: input.spouse ? mapPerson(input.spouse) : null,
@@ -182,6 +197,7 @@ function loadProfile(filePath: string): {
     retirementLocation: input.retirementLocation,
     targetAnnualConversion: input.targetAnnualConversion,
     spendingEngine: input.spendingEngine,
+    annualContributions,
   };
 
   // ── Accounts
@@ -339,12 +355,12 @@ Example:
 
     case 'seasons': {
       const years = commandArg ? parseInt(commandArg, 10) : 30;
-      printSeasons(retireNow.yearlyProjections, years);
+      printSeasons(retireStated.yearlyProjections, years);
       break;
     }
 
     case 'roth':
-      printRoth(retireNow.yearlyProjections);
+      printRoth(retireStated.yearlyProjections);
       break;
 
     case 'ss':
@@ -361,8 +377,8 @@ Example:
 
     case 'all':
       printScenarios(scenarios);
-      printSeasons(retireNow.yearlyProjections, 20);
-      printRoth(retireNow.yearlyProjections);
+      printSeasons(retireStated.yearlyProjections, 20);
+      printRoth(retireStated.yearlyProjections);
       printSS(getSSComparison(), profile);
       printOpportunities(getOpportunities());
       printContingency(getContingency(), profile);

@@ -1,0 +1,97 @@
+{
+  "_comment": "Alex & Morgan — Example profile. International-mode, conversion-primary strategy.",
+  "_notes": [
+    "retirementLocation=international: converts $242k/yr during working years abroad.",
+    "Deliberately exceeds ACA cliff — no MAGI optimization, pays full healthcare price.",
+    "International mode applies COBRA/conversion mechanics (no ACA cliff constraint).",
+    "HSA reserved for Medicare/Medigap costs post-65."
+  ],
+
+  "client": {
+    "name": "Alex",
+    "age": 41,
+    "lifeExpectancy": 90,
+    "fullRetirementAge": 67,
+    "fraMonthlyBenefit": 2750,
+    "socialSecurityClaimAge": 62
+  },
+  "spouse": {
+    "name": "Morgan",
+    "age": 38,
+    "lifeExpectancy": 95,
+    "fullRetirementAge": 67,
+    "fraMonthlyBenefit": 2600,
+    "socialSecurityClaimAge": 62
+  },
+
+  "state": "VA",
+  "currentYear": 2026,
+  "retirementYear": 2041,
+
+  "cobraMonths": 0,
+  "acaHouseholdSize": 4,
+  "annualGrowthRate": 9,
+  "retirementLocation": "international",
+  "targetAnnualConversion": 242000,
+  "annualContributions": {
+    "_comment": "Combined household: 2×401k ($23k each) + 2× backdoor Roth ($7k each)",
+    "pretax": 46000,
+    "roth": 14000,
+    "brokerage": 0
+  },
+
+  "accounts": [
+    {
+      "label": "Alex 401k (pre-tax)",
+      "owner": "client",
+      "type": "pretax_ira",
+      "balance": 485000
+    },
+    {
+      "label": "Morgan 401k (pre-tax)",
+      "owner": "spouse",
+      "type": "pretax_ira",
+      "balance": 255000
+    },
+    {
+      "label": "Alex Roth IRA",
+      "owner": "client",
+      "type": "roth_ira",
+      "balance": 88000
+    },
+    {
+      "label": "Morgan Roth IRA",
+      "owner": "spouse",
+      "type": "roth_ira",
+      "balance": 51000
+    },
+    {
+      "label": "Taxable brokerage",
+      "owner": "joint",
+      "type": "brokerage",
+      "balance": 5000,
+      "costBasis": 5000
+    },
+    {
+      "label": "HSA",
+      "owner": "client",
+      "type": "hsa",
+      "balance": 28000
+    }
+  ],
+
+  "homeEquity": 115000,
+
+  "spending": {
+    "_comment": "Essential = $78k living + $40k international healthcare = $118k",
+    "essential": 118000,
+    "lifestyleActive": 8000,
+    "lifestyleSlower": 4000,
+    "lifestyleTaperAge": 75,
+    "charitable": 0,
+    "inflationRate": 3,
+    "mortgageAnnualPayment": 46200,
+    "mortgagePaidOffAge": 68,
+    "annualHealthcareCost": 15000
+  }
+}
