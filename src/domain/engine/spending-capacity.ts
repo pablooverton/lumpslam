@@ -3,8 +3,9 @@ import type { SpendingProfile } from '../types/spending';
 import type { GuardrailConfig } from '../types/scenarios';
 
 export interface SpendingCapacityResult {
-  spendingCapacity: number;
-  probabilityOfSuccess: number;
+  spendingCapacity: number;      // portfolio SWR + SS income (long-run)
+  preSsCapacity: number;         // portfolio SWR only (no SS) — accurate for pre-SS years
+  probabilityOfSuccess: number;  // baseline estimate; runner adjusts for pre-SS depletion
   surplusOrDeficit: number;
   lowerGuardrailDollarDrop: number;
   lowerGuardrailSpendingCutDollars: number;
@@ -57,6 +58,7 @@ export function calculateSpendingCapacity(
 
   return {
     spendingCapacity,
+    preSsCapacity: portfolioContribution,
     probabilityOfSuccess,
     surplusOrDeficit,
     lowerGuardrailDollarDrop,

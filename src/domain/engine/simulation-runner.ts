@@ -29,16 +29,7 @@ export function runSimulation(
     ? (getStateInfo(profile.stateOfResidence)?.topMarginalRate ?? 0)
     : 0;
 
-  // Resolve effective engine.
-  // auto (default): conversion_primary when targetBracket is set, otherwise withdrawal_sequencing.
-  const effectiveEngine: 'withdrawal_sequencing' | 'conversion_primary' =
-    profile.spendingEngine === 'conversion_primary'
-      ? 'conversion_primary'
-      : profile.spendingEngine === 'withdrawal_sequencing'
-      ? 'withdrawal_sequencing'
-      : profile.targetBracket != null
-      ? 'conversion_primary'
-      : 'withdrawal_sequencing';
+  // Engine selection is deferred — see below after accumulation phase.
 
   const targetYear = profile.retirementYearDesired ?? profile.currentYear;
   const retirementYear =
@@ -101,6 +92,24 @@ export function runSimulation(
     totalHsa: hsaBalance,
     totalLiquid: pretaxBalance + rothBalance + brokerageBalance + inheritedIraBalance + hsaBalance,
   };
+
+  // Resolve effective engine — done after accumulation so we can inspect projected balances.
+  // auto (default):
+  //   1. conversion_primary if targetBracket is set (user is targeting a bracket ceiling)
+  //   2. conversion_primary if no brokerage at retirement — surplus-driven conversions require
+  //      brokerage; without it, withdrawal_sequencing silently produces zero conversions for
+  //      profiles that are entirely pre-tax (e.g. a user: $0 brokerage throughout).
+  //   3. withdrawal_sequencing otherwise
+  const effectiveEngine: 'withdrawal_sequencing' | 'conversion_primary' =
+    profile.spendingEngine === 'conversion_primary'
+      ? 'conversion_primary'
+      : profile.spendingEngine === 'withdrawal_sequencing'
+      ? 'withdrawal_sequencing'
+      : profile.targetBracket != null
+      ? 'conversion_primary'
+      : projectedAssets.totalBrokerage === 0 && projectedAssets.totalPretax > 0
+      ? 'conversion_primary'
+      : 'withdrawal_sequencing';
 
   // The projected portfolio and SS are in nominal retirement-year dollars (grown at nominal rate).
   // spending.baseAnnualSpending is in today's (current-year) real dollars.
@@ -386,10 +395,13 @@ export function runSimulation(
         otherIncome: inheritedDist,
       });
 
-      if ((season === 'cobra' || season === 'international' || season === 'medicare') && pretaxBalance > 0) {
+      if ((season === 'cobra' || season === 'international' || season === 'medicare' || season === 'rmd') && pretaxBalance > 0) {
         const surplus = capacityResult.spendingCapacity - spending.baseAnnualSpending;
-        const TARGET_BRACKET_CEILING =
-          profile.filingStatus === 'married_filing_jointly' ? 206_700 : 103_350;
+        const TARGET_BRACKET_CEILING = getBracketCeiling(
+          profile.targetBracket ?? '22%',
+          profile.filingStatus,
+          FEDERAL_INCOME_TAX_BRACKETS_2025
+        );
         rothConversion = calculateRothConversion({
           currentMAGI: magi,
           surplusSpendingCapacity: Math.max(0, surplus),
@@ -490,13 +502,38 @@ export function runSimulation(
     }
   }
 
+  // Post-simulation probability adjustment for pre-SS portfolio depletion.
+  //
+  // The baseline formula in calculateSpendingCapacity treats SS as immediately available,
+  // which overstates probability for early retirees with long SS gaps. Example: retiring at
+  // 39 with SS at 67 and a $730k portfolio — the formula says 99% but the simulation shows
+  // the portfolio hits $0 at age 49, 18 years before SS starts.
+  //
+  // Fix: inspect the actual projection. If the portfolio depletes during the pre-SS window,
+  // cap probability based on how early it happens (earlier = worse = lower cap).
+  //   depletes at year 0 of N pre-SS years → cap at ~50%
+  //   depletes at year N-1 of N pre-SS years → cap at ~85%
+  const preSsYears = yearlyProjections.filter(
+    (y) => y.income.socialSecurityClient === 0 && y.income.socialSecuritySpouse === 0
+  );
+  let finalProbability = capacityResult.probabilityOfSuccess;
+  if (preSsYears.length > 0) {
+    const depletionIndex = preSsYears.findIndex((y) => y.portfolioEndBalance <= 0);
+    if (depletionIndex >= 0) {
+      const depletionFraction = depletionIndex / preSsYears.length;
+      const probabilityCap = 0.50 + depletionFraction * 0.35;
+      finalProbability = Math.min(finalProbability, probabilityCap);
+    }
+  }
+
   return {
     scenarioType,
     retirementYear,
     spendingCapacity: capacityResult.spendingCapacity,
+    preSsCapacity: capacityResult.preSsCapacity,
     desiredSpending,
     surplusOrDeficit: capacityResult.surplusOrDeficit,
-    probabilityOfSuccess: capacityResult.probabilityOfSuccess,
+    probabilityOfSuccess: finalProbability,
     lowerGuardrailDollarDrop: capacityResult.lowerGuardrailDollarDrop,
     lowerGuardrailSpendingCutDollars: capacityResult.lowerGuardrailSpendingCutDollars,
     yearlyProjections,

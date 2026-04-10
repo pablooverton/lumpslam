@@ -11,10 +11,11 @@ export interface GuardrailConfig {
 export interface ScenarioResult {
   scenarioType: ScenarioType;
   retirementYear: number;
-  spendingCapacity: number;
+  spendingCapacity: number;      // long-run capacity: portfolio SWR + SS income
+  preSsCapacity: number;         // portfolio SWR only (before SS starts) — use this for early-retirement scenarios
   desiredSpending: number;
   surplusOrDeficit: number;
-  probabilityOfSuccess: number; // 0–1
+  probabilityOfSuccess: number;  // 0–1; adjusted downward if portfolio depletes before SS starts
   lowerGuardrailDollarDrop: number;   // absolute dollar drop that triggers lower guardrail
   lowerGuardrailSpendingCutDollars: number; // monthly dollar cut at lower guardrail
   yearlyProjections: YearlyProjection[];

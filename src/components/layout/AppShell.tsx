@@ -75,6 +75,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <span>↓</span>
             <span>Export Markdown</span>
           </button>
+          <p className="text-xs text-gray-600 mt-4 leading-relaxed">
+            For educational purposes only. Not financial advice. Consult a licensed financial advisor before making any retirement decisions.
+          </p>
         </div>
       </nav>
       <main className="flex-1 p-8 overflow-auto">{children}</main>
