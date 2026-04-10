@@ -155,12 +155,15 @@ export function buildMarkdownExport(params: {
   lines.push('');
 
   // ── Four Seasons ──────────────────────────────────────────────────────────
-  if (retireNow && retireNow.yearlyProjections.length > 0) {
+  // Use retire_at_stated_date projection so the table reflects the actual plan,
+  // not the "retire today" stress test which burns early accounts in a few years.
+  const seasonsSource = retireStated ?? retireNow;
+  if (seasonsSource && seasonsSource.yearlyProjections.length > 0) {
     lines.push('## Four Seasons — Year-by-Year Projection');
     lines.push('');
     lines.push('| Year | Age | Season | MAGI | ACA Eligible | From Pretax | From Brokerage | Roth Conv | Fed Tax | Portfolio End |');
     lines.push('|------|-----|--------|------|:------------:|-------------|----------------|-----------|---------|---------------|');
-    for (const p of retireNow.yearlyProjections) {
+    for (const p of seasonsSource.yearlyProjections) {
       lines.push(
         `| ${p.year} | ${p.clientAge} | ${SEASON_LABEL[p.season] ?? p.season} | ${cur(p.magi)} | ${p.acaSubsidyEligible ? 'Yes' : '—'} | ${cur(p.withdrawals.fromPretax)} | ${cur(p.withdrawals.fromBrokerage)} | ${p.rothConversion ? cur(p.rothConversion.conversionAmount) : '—'} | ${cur(p.taxLiability.totalFederalTax)} | ${cur(p.portfolioEndBalance)} |`
       );
@@ -169,8 +172,8 @@ export function buildMarkdownExport(params: {
   }
 
   // ── Roth Conversions ──────────────────────────────────────────────────────
-  if (retireNow) {
-    const conversionYears = retireNow.yearlyProjections.filter((p) => p.rothConversion !== null);
+  if (seasonsSource) {
+    const conversionYears = seasonsSource.yearlyProjections.filter((p) => p.rothConversion !== null);
     if (conversionYears.length > 0) {
       const totalConverted = conversionYears.reduce((s, p) => s + (p.rothConversion?.conversionAmount ?? 0), 0);
       const totalTax = conversionYears.reduce((s, p) => s + (p.rothConversion?.taxOnConversion ?? 0), 0);

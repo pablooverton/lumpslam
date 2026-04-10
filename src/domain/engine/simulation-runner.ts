@@ -101,12 +101,23 @@ export function runSimulation(
     totalHsa: hsaBalance,
     totalLiquid: pretaxBalance + rothBalance + brokerageBalance + inheritedIraBalance + hsaBalance,
   };
+
+  // The projected portfolio and SS are in nominal retirement-year dollars (grown at nominal rate).
+  // spending.baseAnnualSpending is in today's (current-year) real dollars.
+  // To compare apples-to-apples, deflate the projected portfolio and SS back to real terms
+  // before computing spending capacity. Without this, a 15-year runway at 9% nominal makes the
+  // capacity look ~1.56× larger than the real purchasing power actually is.
+  const inflationAtRetirement = Math.pow(1 + spending.inflationRate, workingYears);
+  const realProjectedLiquid = projectedAssets.totalLiquid / inflationAtRetirement;
+  const realProjectedAssets = { ...projectedAssets, totalLiquid: realProjectedLiquid };
+  const realProjectedAnnualSS = projectedAnnualSS / inflationAtRetirement;
+
   const capacityResult = calculateSpendingCapacity(
-    projectedAssets,
+    realProjectedAssets,
     spending,
     guardrails,
     yearsInRetirement,
-    projectedAnnualSS
+    realProjectedAnnualSS
   );
 
   // Desired spending = essential base only (matches the advisor reference model).
