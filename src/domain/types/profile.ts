@@ -24,7 +24,7 @@ export interface ClientProfile {
   retirementYearDesired: number | null; // null = retire now
   cobraMonths: number;                  // 0 = skip COBRA, go straight to ACA/bridge
   acaHouseholdSize?: number;            // people on ACA plan; determines subsidy cliff. Default: 2
-  annualGrowthRate?: number;            // nominal portfolio growth rate. Default: 0.07
+  annualGrowthRate?: number;            // nominal portfolio growth rate. Default: 0.08 (~5% real at 3% inflation — Boglehead 60/40 baseline)
   retirementLocation?: 'us' | 'international'; // 'international' skips ACA season. Default: 'us'
   targetBracket?: '10%' | '12%' | '22%' | '24%' | '32%' | '35%';
   // If set, the engine fills exactly to this bracket ceiling each year via Roth conversion.

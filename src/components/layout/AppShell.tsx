@@ -9,6 +9,7 @@ import { buildMarkdownExport } from '@/lib/export-markdown';
 const NAV_ITEMS = [
   { href: '/profile',         label: 'Profile & Assets' },
   { href: '/scenarios',       label: 'Retirement Date' },
+  { href: '/monte-carlo',     label: 'Monte Carlo' },
   { href: '/seasons',         label: 'Four Seasons' },
   { href: '/roth',            label: 'Roth Conversions' },
   { href: '/social-security', label: 'Social Security' },

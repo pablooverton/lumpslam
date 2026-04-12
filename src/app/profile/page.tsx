@@ -238,7 +238,7 @@ interface FormState {
   retireOutsideUS: boolean;
   healthBridge: 'cobra' | 'aca' | 'spouse_employer';  // US only
   dependentsOnPlan: number;          // children/other dependents (not client or spouse) on health plan
-  growthScenario: 'conservative' | 'moderate' | 'optimistic';
+  growthScenario: 'pessimistic' | 'conservative' | 'moderate' | 'optimistic' | 'historical';
   accounts: Account[];
   homeEquity: number;
   essentialAnnualSpending: number;   // maps to baseAnnualSpending (exclude healthcare if using HSA)
@@ -285,8 +285,12 @@ function buildFormState(
     healthBridge: (profile?.cobraMonths ?? 0) > 0 ? 'cobra' : 'aca',
     dependentsOnPlan: Math.max(0, (profile?.acaHouseholdSize ?? 2) - 1 - (profile?.spouse ? 1 : 0)),
     growthScenario: (() => {
-      const r = profile?.annualGrowthRate ?? 0.07;
-      return r >= 0.085 ? 'optimistic' : r <= 0.06 ? 'conservative' : 'moderate';
+      const r = profile?.annualGrowthRate ?? 0.08;
+      if (r <= 0.065) return 'pessimistic';
+      if (r <= 0.075) return 'conservative';
+      if (r <= 0.085) return 'moderate';
+      if (r <= 0.095) return 'optimistic';
+      return 'historical';
     })(),
     accounts: accounts.length > 0 ? accounts : [{ id: '1', label: '', owner: 'client', type: 'pretax_ira', currentBalance: 0 }],
     homeEquity,
@@ -402,9 +406,11 @@ export default function ProfilePage() {
     // ACA household = client + spouse (if present) + dependents
     const acaHouseholdSize = 1 + (form.hasSpouse ? 1 : 0) + form.dependentsOnPlan;
     const annualGrowthRate =
-      form.growthScenario === 'conservative' ? 0.05
-      : form.growthScenario === 'optimistic' ? 0.09
-      : 0.07;
+      form.growthScenario === 'pessimistic'  ? 0.06
+      : form.growthScenario === 'conservative' ? 0.07
+      : form.growthScenario === 'optimistic'   ? 0.09
+      : form.growthScenario === 'historical'   ? 0.10
+      : 0.08; // moderate (default)
 
     const clientProfile: ClientProfile = {
       client: form.client,
@@ -917,29 +923,33 @@ export default function ProfilePage() {
           <div className="px-4 py-4 space-y-4">
             <div>
               <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-2">Market Scenario</p>
-              <div className="flex gap-3">
+              <div className="flex gap-2">
                 {([
-                  { value: 'conservative', label: 'Conservative', sub: '5% / year' },
-                  { value: 'moderate',     label: 'Moderate',     sub: '7% / year' },
-                  { value: 'optimistic',   label: 'Optimistic',   sub: '9% / year' },
-                ] as const).map(({ value, label, sub }) => (
+                  { value: 'pessimistic',  label: 'Pessimistic',  nominal: '6%',  real: '~3% real', context: 'Bond-heavy / stress test' },
+                  { value: 'conservative', label: 'Conservative', nominal: '7%',  real: '~4% real', context: '40/60 blended' },
+                  { value: 'moderate',     label: 'Moderate',     nominal: '8%',  real: '~5% real', context: '60/40 Boglehead baseline' },
+                  { value: 'optimistic',   label: 'Optimistic',   nominal: '9%',  real: '~6% real', context: '70/30 equity tilt' },
+                  { value: 'historical',   label: 'Historical',   nominal: '10%', real: '~7% real', context: 'US equity long-run avg' },
+                ] as const).map(({ value, label, nominal, real, context }) => (
                   <button
                     key={value}
                     type="button"
                     onClick={() => set('growthScenario', value)}
-                    className={`flex-1 px-3 py-2.5 rounded border text-sm font-medium transition-colors text-center ${
+                    title={context}
+                    className={`flex-1 px-2 py-2.5 rounded border text-xs font-medium transition-colors text-center ${
                       form.growthScenario === value
                         ? 'bg-blue-600 border-blue-500 text-white'
                         : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200'
                     }`}
                   >
-                    <div>{label}</div>
-                    <div className="text-xs font-normal opacity-70 mt-0.5">{sub}</div>
+                    <div className="font-semibold">{nominal}</div>
+                    <div className="opacity-70 mt-0.5">{label}</div>
+                    <div className="opacity-50 mt-0.5 text-[10px]">{real}</div>
                   </button>
                 ))}
               </div>
               <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
-                Nominal annual portfolio return assumption. Moderate (7%) is a historically reasonable long-term baseline for a diversified stock/bond portfolio.
+                Nominal annual return (assuming ~3% inflation). Moderate (8%) ≈ 5% real — consistent with a 60/40 global portfolio and Boglehead planning consensus. Historical US equities ~10% nominal / ~7% real (1926–2023).
               </p>
             </div>
 

@@ -14,16 +14,19 @@ import { getAcaCliff } from '../constants/aca-thresholds';
 import { RMD_START_AGE } from '../constants/rmd-tables';
 import { getStateInfo } from '../constants/states';
 
-const DEFAULT_GROWTH_RATE = 0.07;
+const DEFAULT_GROWTH_RATE = 0.08;
 
 export function runSimulation(
   profile: ClientProfile,
   assets: AssetSnapshot,
   spending: SpendingProfile,
   guardrails: GuardrailConfig,
-  scenarioType: ScenarioType
+  scenarioType: ScenarioType,
+  annualReturnSequence?: number[]  // Monte Carlo injection: per-year nominal returns during retirement. If omitted, uses flat annualGrowthRate.
 ): ScenarioResult {
-  const growthRate = profile.annualGrowthRate ?? DEFAULT_GROWTH_RATE;
+  const baseGrowthRate = profile.annualGrowthRate ?? DEFAULT_GROWTH_RATE;
+  // For backward compat: flat growthRate used in accumulation phase and as fallback
+  const growthRate = baseGrowthRate;
   const householdSize = profile.acaHouseholdSize ?? 2;
   const stateRate = profile.hasStateIncomeTax
     ? (getStateInfo(profile.stateOfResidence)?.topMarginalRate ?? 0)
@@ -156,6 +159,9 @@ export function runSimulation(
       clientAge > profile.client.lifeExpectancy &&
       (spouseAge === null || spouseAge > (profile.spouse?.lifeExpectancy ?? 0))
     ) break;
+
+    // Per-year growth rate: Monte Carlo injects a return sequence; deterministic runs use flat rate.
+    const yearGrowthRate = annualReturnSequence?.[yearIndex] ?? growthRate;
 
     const season = classifySeasonForYear(year, profile, cobraEndYear);
     const inflationFactor = Math.pow(1 + spending.inflationRate, yearIndex);
@@ -296,11 +302,11 @@ export function runSimulation(
       inheritedIraBalance = Math.max(0, inheritedIraBalance - inheritedDist);
       hsaBalance = Math.max(0, hsaBalance - fromHsa);
 
-      pretaxBalance *= 1 + growthRate;
-      brokerageBalance *= 1 + growthRate;
-      rothBalance *= 1 + growthRate;
-      inheritedIraBalance *= 1 + growthRate;
-      hsaBalance *= 1 + growthRate;
+      pretaxBalance *= 1 + yearGrowthRate;
+      brokerageBalance *= 1 + yearGrowthRate;
+      rothBalance *= 1 + yearGrowthRate;
+      inheritedIraBalance *= 1 + yearGrowthRate;
+      hsaBalance *= 1 + yearGrowthRate;
 
       const portfolioEnd = pretaxBalance + rothBalance + brokerageBalance + inheritedIraBalance + hsaBalance;
 
@@ -470,11 +476,11 @@ export function runSimulation(
       inheritedIraBalance = Math.max(0, inheritedIraBalance - inheritedDist);
       hsaBalance = Math.max(0, hsaBalance - fromHsa);
 
-      pretaxBalance *= 1 + growthRate;
-      brokerageBalance *= 1 + growthRate;
-      rothBalance *= 1 + growthRate;
-      inheritedIraBalance *= 1 + growthRate;
-      hsaBalance *= 1 + growthRate;
+      pretaxBalance *= 1 + yearGrowthRate;
+      brokerageBalance *= 1 + yearGrowthRate;
+      rothBalance *= 1 + yearGrowthRate;
+      inheritedIraBalance *= 1 + yearGrowthRate;
+      hsaBalance *= 1 + yearGrowthRate;
 
       const portfolioEnd =
         pretaxBalance + rothBalance + brokerageBalance + inheritedIraBalance + hsaBalance;
