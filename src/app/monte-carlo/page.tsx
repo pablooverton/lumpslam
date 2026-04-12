@@ -1,11 +1,10 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { useProfileStore } from '@/store/profile.store';
 import { runMonteCarlo, type MonteCarloConfig, type MonteCarloResult, type PercentileBand } from '@/domain/engine/monte-carlo';
 import { formatCurrency } from '@/lib/format';
-import type { ScenarioType } from '@/domain/types/scenarios';
 
 // ─── Portfolio preset configs ─────────────────────────────────────────────────
 
@@ -161,7 +160,8 @@ function SuccessGauge({ rate }: { rate: number }) {
 export default function MonteCarloPage() {
   const { profile, assets, spending, guardrails } = useProfileStore();
 
-  const [scenarioType, setScenarioType] = useState<ScenarioType>('retire_at_stated_date');
+  const defaultRetireYear = profile?.retirementYearDesired ?? profile?.currentYear ?? new Date().getFullYear();
+  const [selectedYear, setSelectedYear] = useState(defaultRetireYear);
   const [presetIdx, setPresetIdx] = useState(1); // 60/40 default
   const [simCount, setSimCount] = useState(1000);
   const [result, setResult] = useState<MonteCarloResult | null>(null);
@@ -170,8 +170,15 @@ export default function MonteCarloPage() {
 
   const preset = PORTFOLIO_PRESETS[presetIdx];
 
+  // Build a modified profile with retirementYearDesired = selectedYear for the slider.
+  // Always use 'retire_at_stated_date' so the engine handles the working years naturally.
+  const profileForYear = useMemo(() => {
+    if (!profile) return null;
+    return { ...profile, retirementYearDesired: selectedYear };
+  }, [profile, selectedYear]);
+
   const handleRun = useCallback(() => {
-    if (!profile || !assets || !spending) return;
+    if (!profileForYear || !assets || !spending) return;
 
     setRunning(true);
     setResult(null);
@@ -185,14 +192,14 @@ export default function MonteCarloPage() {
       };
 
       const t0 = performance.now();
-      const mc = runMonteCarlo(profile, assets, spending, guardrails, scenarioType, config);
+      const mc = runMonteCarlo(profileForYear, assets, spending, guardrails, 'retire_at_stated_date', config);
       const t1 = performance.now();
 
       setResult(mc);
       setElapsed(Math.round(t1 - t0));
       setRunning(false);
     }, 10);
-  }, [profile, assets, spending, guardrails, scenarioType, presetIdx, simCount, preset]);
+  }, [profileForYear, assets, spending, guardrails, presetIdx, simCount, preset]);
 
   if (!profile || !assets || !spending) {
     return (
@@ -218,26 +225,28 @@ export default function MonteCarloPage() {
       {/* Config */}
       <div className="rounded-lg border border-gray-700 bg-gray-900 p-4 space-y-4">
         <div>
-          <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-2">Retirement Scenario</p>
-          <div className="flex gap-2">
-            {([
-              { type: 'retire_now'            as ScenarioType, label: 'Retire Now',   year: profile.currentYear },
-              { type: 'retire_at_stated_date' as ScenarioType, label: 'Target Date',  year: profile.retirementYearDesired ?? profile.currentYear },
-              { type: 'no_change'             as ScenarioType, label: '+3 Years',     year: (profile.retirementYearDesired ?? profile.currentYear) + 3 },
-            ]).map(({ type, label, year }) => (
-              <button
-                key={type}
-                type="button"
-                onClick={() => setScenarioType(type)}
-                className={`px-3 py-1.5 rounded border text-xs font-medium transition-colors ${
-                  scenarioType === type
-                    ? 'bg-blue-600 border-blue-500 text-white'
-                    : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200'
-                }`}
-              >
-                {label} <span className="opacity-60">{year}</span>
-              </button>
-            ))}
+          <div className="flex items-end justify-between mb-2">
+            <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">Retirement Year</p>
+            <div className="text-right">
+              <span className="text-white font-semibold tabular-nums">{selectedYear}</span>
+              <span className="text-gray-500 text-xs ml-2">
+                ({selectedYear === profile.currentYear ? 'retire now' : `${selectedYear - profile.currentYear} yr${selectedYear - profile.currentYear !== 1 ? 's' : ''} away`}
+                {' · '}age {profile.client.age + (selectedYear - profile.currentYear)})
+              </span>
+            </div>
+          </div>
+          <input
+            type="range"
+            min={profile.currentYear}
+            max={profile.currentYear + 20}
+            step={1}
+            value={selectedYear}
+            onChange={(e) => setSelectedYear(Number(e.target.value))}
+            className="w-full accent-blue-500"
+          />
+          <div className="flex justify-between text-xs text-gray-600 mt-0.5">
+            <span>{profile.currentYear} (now)</span>
+            <span>{profile.currentYear + 20}</span>
           </div>
         </div>
 

@@ -129,7 +129,16 @@ export function runMonteCarlo(
 
     const finalBalance = result.yearlyProjections.at(-1)?.portfolioEndBalance ?? 0;
     finalPortfolios.push(finalBalance);
-    if (finalBalance > 0) successCount++;
+
+    // A trial "succeeds" only if the portfolio never sustainably depleted.
+    // Using finalBalance > 0 is wrong: when SS income covers all spending,
+    // the portfolio stops being drawn and a tiny residual (e.g. $500) stays
+    // positive forever — that's a failure disguised as success.
+    // Instead: if the minimum balance across ALL years drops below $10k,
+    // count it as depleted (effectively $0 on a multi-million scale).
+    const DEPLETION_FLOOR = 10_000;
+    const minBalance = Math.min(...result.yearlyProjections.map(p => p.portfolioEndBalance));
+    if (minBalance > DEPLETION_FLOOR) successCount++;
   }
 
   // Sort final portfolios for percentiles
