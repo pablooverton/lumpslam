@@ -68,8 +68,8 @@ export function runSimulation(
     pretaxBalance    = (pretaxBalance    + (contrib?.pretax    ?? 0)) * (1 + growthRate);
     rothBalance      = (rothBalance      + (contrib?.roth      ?? 0)) * (1 + growthRate);
     brokerageBalance = (brokerageBalance + (contrib?.brokerage ?? 0)) * (1 + growthRate);
-    inheritedIraBalance = inheritedIraBalance * (1 + growthRate);
-    hsaBalance          = hsaBalance          * (1 + growthRate);
+    inheritedIraBalance = inheritedIraBalance                       * (1 + growthRate);
+    hsaBalance          = (hsaBalance + (contrib?.hsa ?? 0))       * (1 + growthRate);
   }
 
   const clientSSMonthly = calculateBenefitAtClaimAge(
@@ -132,9 +132,21 @@ export function runSimulation(
     realProjectedAnnualSS
   );
 
-  // Desired spending = essential base only (matches the advisor reference model).
-  // Mortgage, travel, and charitable are modeled year-by-year in the projection loop.
-  const desiredSpending = spending.baseAnnualSpending;
+  // Desired spending = all fixed costs the client must cover at retirement start, in real terms.
+  // Essential (baseAnnualSpending) is already in real (current-year) dollars.
+  // Healthcare (annualHealthcareCost) is a real base that inflates each year — Year-0 cost = entered value.
+  // Mortgage is a nominal fixed payment; deflate to real by dividing by inflationAtRetirement so the
+  // comparison with spending capacity (which is also in real terms) is apples-to-apples.
+  const clientAgeAtRetirement = profile.client.age + (retirementYear - profile.currentYear);
+  const mortgageActiveAtRetirement =
+    (spending.mortgageAnnualPayment ?? 0) > 0 &&
+    clientAgeAtRetirement < (spending.mortgagePaidOffAge ?? 999);
+  const realMortgageAtRetirement = mortgageActiveAtRetirement
+    ? (spending.mortgageAnnualPayment ?? 0) / inflationAtRetirement
+    : 0;
+  const realHealthcareAtRetirement = spending.annualHealthcareCost ?? 0;
+  const desiredSpending =
+    spending.baseAnnualSpending + realMortgageAtRetirement + realHealthcareAtRetirement;
   const yearlyProjections: YearlyProjection[] = [];
   const stdDeduction = STANDARD_DEDUCTION_2025[profile.filingStatus];
 

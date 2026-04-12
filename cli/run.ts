@@ -121,11 +121,12 @@ interface ProfileInput {
    *  "conversion_primary": fill targetBracket from pretax; Roth pays taxes + spending. */
   spendingEngine?: 'withdrawal_sequencing' | 'conversion_primary' | 'auto';
   /** Annual contributions during accumulation (working) years. Added each year before growth.
-   *  Omit if already retired. Typical: pretax=$46k (2×401k), roth=$14k (2× backdoor Roth). */
+   *  Omit if already retired. Typical: pretax=$46k (2×401k), roth=$14k (2× backdoor Roth), hsa=$8300 (maxed). */
   annualContributions?: {
     pretax: number;
     roth: number;
     brokerage: number;
+    hsa?: number;
   };
   accounts: AccountInput[];
   /** Home equity — non-liquid, for reference only */
@@ -176,9 +177,10 @@ function loadProfile(filePath: string): {
 
   const annualContributions: AnnualContributions | undefined = input.annualContributions
     ? {
-        pretax: input.annualContributions.pretax,
-        roth: input.annualContributions.roth,
+        pretax:    input.annualContributions.pretax,
+        roth:      input.annualContributions.roth,
         brokerage: input.annualContributions.brokerage,
+        hsa:       input.annualContributions.hsa ?? 0,
       }
     : undefined;
 

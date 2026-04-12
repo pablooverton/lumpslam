@@ -12,6 +12,7 @@ export interface AnnualContributions {
   pretax: number;    // 401k / traditional IRA contributions per year (combined household)
   roth: number;      // Roth IRA (including backdoor Roth) per year (combined household)
   brokerage: number; // taxable brokerage savings per year
+  hsa?: number;      // HSA contributions per year (combined household). Default: 0
 }
 
 export interface ClientProfile {

@@ -200,7 +200,7 @@ const DEMOS: DemoEntry[] = [
       cobraMonths: 0, acaHouseholdSize: 4,
       retirementLocation: 'international',
       targetBracket: '22%' as const,
-      annualContributions: { pretax: 46_000, roth: 14_000, brokerage: 0 },
+      annualContributions: { pretax: 46_000, roth: 14_000, brokerage: 0, hsa: 8_300 },
     },
     accounts: [
       { id: '1', label: "Alex's 401k",    owner: 'client', type: 'pretax_ira', currentBalance: 485_000 },
@@ -253,7 +253,7 @@ interface FormState {
   mortgagePaidOffAge: number;      // client age at payoff
   // Expert/advisor settings
   targetBracket?: '10%' | '12%' | '22%' | '24%' | '32%' | '35%';
-  annualContributions: { pretax: number; roth: number; brokerage: number };
+  annualContributions: { pretax: number; roth: number; brokerage: number; hsa: number };
 }
 
 const BLANK_PERSON: PersonProfile = {
@@ -305,7 +305,12 @@ function buildFormState(
     mortgageAnnualPayment: spending?.mortgageAnnualPayment ?? 0,
     mortgagePaidOffAge: spending?.mortgagePaidOffAge ?? 69,
     targetBracket: profile?.targetBracket,
-    annualContributions: profile?.annualContributions ?? { pretax: 0, roth: 0, brokerage: 0 },
+    annualContributions: {
+      pretax:    profile?.annualContributions?.pretax    ?? 0,
+      roth:      profile?.annualContributions?.roth      ?? 0,
+      brokerage: profile?.annualContributions?.brokerage ?? 0,
+      hsa:       profile?.annualContributions?.hsa       ?? 0,
+    },
   };
 }
 
@@ -426,7 +431,7 @@ export default function ProfilePage() {
       retirementLocation,
       targetBracket: form.targetBracket,
       annualContributions:
-        (form.annualContributions.pretax + form.annualContributions.roth + form.annualContributions.brokerage) > 0
+        (form.annualContributions.pretax + form.annualContributions.roth + form.annualContributions.brokerage + form.annualContributions.hsa) > 0
           ? form.annualContributions
           : undefined,
     };
@@ -990,10 +995,20 @@ export default function ProfilePage() {
                       />
                     </div>
                   </Field>
+                  <Field label="HSA contributions (total household)">
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 text-sm pointer-events-none">$</span>
+                      <NumericInput
+                        value={form.annualContributions.hsa}
+                        onChange={(v) => setForm((f) => ({ ...f, annualContributions: { ...f.annualContributions, hsa: v } }))}
+                        className={inputClass + ' pl-6'}
+                      />
+                    </div>
+                  </Field>
                 </div>
-                {(form.annualContributions.pretax + form.annualContributions.roth + form.annualContributions.brokerage) > 0 && (
+                {(form.annualContributions.pretax + form.annualContributions.roth + form.annualContributions.brokerage + form.annualContributions.hsa) > 0 && (
                   <p className="text-xs text-gray-500 mt-2">
-                    ${((form.annualContributions.pretax + form.annualContributions.roth + form.annualContributions.brokerage) / 1_000).toFixed(1)}k/yr saved over {form.retirementYearDesired - form.currentYear} years
+                    ${((form.annualContributions.pretax + form.annualContributions.roth + form.annualContributions.brokerage + form.annualContributions.hsa) / 1_000).toFixed(1)}k/yr saved over {form.retirementYearDesired - form.currentYear} years
                   </p>
                 )}
               </div>
