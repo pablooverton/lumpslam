@@ -124,6 +124,18 @@ export function runSimulation(
   const realProjectedAssets = { ...projectedAssets, totalLiquid: realProjectedLiquid };
   const realProjectedAnnualSS = projectedAnnualSS / inflationAtRetirement;
 
+  // Brokerage gain ratio: portion of each brokerage withdrawal that is realized gain (and
+  // therefore adds to MAGI). Basis is return of capital and is MAGI-invisible.
+  // Key for the $50k-brokerage / ACA-cliff case from the "Tax Strategies by Balance" video:
+  // a $21k withdrawal at 100% basis contributes $0 to MAGI, preserving the ACA subsidy.
+  const totalBrokerageBasis = assets.accounts
+    .filter((a) => a.type === 'brokerage')
+    .reduce((sum, a) => sum + (a.costBasis ?? a.currentBalance), 0);
+  const brokerageGainRatio =
+    assets.totalBrokerage > 0
+      ? Math.max(0, Math.min(1, (assets.totalBrokerage - totalBrokerageBasis) / assets.totalBrokerage))
+      : 0;
+
   const capacityResult = calculateSpendingCapacity(
     realProjectedAssets,
     spending,
@@ -149,6 +161,14 @@ export function runSimulation(
     spending.baseAnnualSpending + realMortgageAtRetirement + realHealthcareAtRetirement;
   const yearlyProjections: YearlyProjection[] = [];
   const stdDeduction = STANDARD_DEDUCTION_2025[profile.filingStatus];
+
+  // IRMAA surcharges are based on MAGI from 2 years prior (the "lookback MAGI"). Tracking per-year
+  // MAGI history lets us price this correctly: a big Roth conversion in year N triggers an IRMAA
+  // increase in year N+2, not year N. Initialized empty — the first two Medicare years have no
+  // lookback available and fall back to current-year MAGI.
+  const magiHistory: number[] = [];
+  const getLookbackMagi = (currentMagi: number): number =>
+    magiHistory.length >= 2 ? magiHistory[magiHistory.length - 2] : currentMagi;
 
   const inheritedAccount = assets.accounts.find((a) => a.type === 'inherited_ira');
   const originalRemainingYears = inheritedAccount?.inheritedIraRemainingYears ?? 10;
@@ -326,7 +346,7 @@ export function runSimulation(
       const acaResult = season === 'aca' ? assessAcaEligibility(magi, householdSize) : null;
       const irmaaSurcharge =
         season === 'medicare' || season === 'rmd'
-          ? calculateIrmaaSurcharge(magi, profile.filingStatus)
+          ? calculateIrmaaSurcharge(getLookbackMagi(magi), profile.filingStatus)
           : 0;
 
       // State tax: most states don't tax SS; applied to non-SS income at top marginal rate
@@ -361,6 +381,7 @@ export function runSimulation(
         irmaaApplies: irmaaSurcharge > 0,
         irmaaSurcharge,
       });
+      magiHistory.push(magi);
 
     } else {
       // ── Withdrawal-Sequencing Engine (original) ────────────────────────────
@@ -383,10 +404,19 @@ export function runSimulation(
         fromPretax = Math.min(remainingGap, pretaxBalance);
         fromRoth = Math.max(0, remainingGap - fromPretax);
       } else if (season === 'aca') {
+        // Plan the sequence so MAGI stays under the cliff. Brokerage withdrawals now count their
+        // realized-gain portion (brokerageGainRatio × amount); only basis is MAGI-invisible.
+        // Roth is pulled before pretax when brokerage's MAGI impact would otherwise exceed the
+        // cliff — this captures the video-informed "Roth as ACA bridge" strategy.
         const ACA_CLIFF = getAcaCliff(householdSize);
         const passiveMagi = inheritedDist + totalSSAnnual * 0.85;
-        const pretaxMagiCapacity = Math.max(0, ACA_CLIFF - passiveMagi - 1);
-        fromBrokerage = Math.min(incomeGap, brokerageBalance);
+        const totalMagiHeadroom = Math.max(0, ACA_CLIFF - passiveMagi - 1);
+        // How much brokerage can we pull before its gains alone exhaust the cliff?
+        const brokerageCapByMagi =
+          brokerageGainRatio > 0 ? totalMagiHeadroom / brokerageGainRatio : Infinity;
+        fromBrokerage = Math.min(incomeGap, brokerageBalance, brokerageCapByMagi);
+        const magiAfterBrokerage = passiveMagi + fromBrokerage * brokerageGainRatio;
+        const pretaxMagiCapacity = Math.max(0, ACA_CLIFF - magiAfterBrokerage - 1);
         const afterBrokerage = incomeGap - fromBrokerage;
         fromPretax = Math.min(afterBrokerage, pretaxBalance, pretaxMagiCapacity);
         const afterPretax = afterBrokerage - fromPretax;
@@ -405,11 +435,16 @@ export function runSimulation(
         total: fromPretax + rmd + fromBrokerage + fromRoth,
       };
 
+      // Only the realized-gain portion of a brokerage withdrawal counts toward MAGI;
+      // basis is return of capital (MAGI-invisible). This enables the $50k-brokerage / ACA-cliff
+      // preservation pattern where the brokerage funds spending but does not blow past the cliff.
+      const brokerageRealizedGains = fromBrokerage * brokerageGainRatio;
+
       magi = calculateMAGI({
         socialSecurityIncludable: totalSSAnnual * 0.85,
         pretaxWithdrawals: fromPretax + rmd,
         rothConversionAmount: 0,
-        capitalGainsRealized: 0,
+        capitalGainsRealized: brokerageRealizedGains,
         otherIncome: inheritedDist,
       });
 
@@ -438,7 +473,7 @@ export function runSimulation(
         : null;
       const irmaaSurcharge =
         season === 'medicare' || season === 'rmd'
-          ? calculateIrmaaSurcharge(magiWithConversion, profile.filingStatus)
+          ? calculateIrmaaSurcharge(getLookbackMagi(magiWithConversion), profile.filingStatus)
           : 0;
 
       // Deflate to 2025 real dollars, subtract standard deduction, scale tax back to nominal.
@@ -517,6 +552,7 @@ export function runSimulation(
         irmaaApplies: irmaaSurcharge > 0,
         irmaaSurcharge,
       });
+      magiHistory.push(magi);
     }
   }
 

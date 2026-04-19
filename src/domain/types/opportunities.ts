@@ -4,7 +4,12 @@ export type OpportunityId =
   | 'concentrated_stock'
   | 'cost_basis_reset'
   | 'donor_advised_fund'
-  | 'qualified_charitable_distributions';
+  | 'qualified_charitable_distributions'
+  | 'five_percent_precondition'
+  | 'conversion_treadmill'
+  | 'supercharge_irmaa_tier2'
+  | 'cobra_brokerage_preservation'
+  | 'roth_as_aca_bridge';
 
 export interface OpportunityAssessment {
   id: OpportunityId;

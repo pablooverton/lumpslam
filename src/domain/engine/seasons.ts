@@ -75,8 +75,12 @@ export function assessAcaEligibility(magi: number, householdSize = 2): AcaEligib
   };
 }
 
+// IRMAA uses MAGI from 2 years prior (the "lookback MAGI"). Medicare in 2026 prices Part B/D
+// surcharges based on your 2024 AGI. A big Roth conversion at age 65 doesn't trigger a surcharge
+// until age 67. Callers must pass the correct lookback value; `currentYearMagi` is only accepted
+// as a fallback for the first two years of Medicare when no lookback is available yet.
 export function calculateIrmaaSurcharge(
-  magi: number,
+  lookbackMagi: number,
   filingStatus: 'married_filing_jointly' | 'single'
 ): number {
   let surcharge = 0;
@@ -85,7 +89,7 @@ export function calculateIrmaaSurcharge(
       filingStatus === 'married_filing_jointly'
         ? bracket.magiFloorMFJ
         : bracket.magiFloorSingle;
-    if (magi >= floor) {
+    if (lookbackMagi >= floor) {
       // Two people on Medicare (couple)
       const people = filingStatus === 'married_filing_jointly' ? 2 : 1;
       surcharge =
@@ -94,4 +98,53 @@ export function calculateIrmaaSurcharge(
     }
   }
   return surcharge;
+}
+
+export interface IrmaaTierInfo {
+  tierIndex: number;           // 0 = no surcharge, 5 = top tier
+  tierLabel: string;           // e.g. "Tier 2" or "No surcharge"
+  magiFloor: number;           // floor of the tier that applies
+  magiCeiling: number;         // ceiling of the tier (Infinity for top)
+  annualSurchargeCouple: number;
+  roomToNextTier: number;      // headroom before next surcharge jump (Infinity if at top)
+  nextTierJump: number;        // annual surcharge increase at next tier (0 at top)
+}
+
+// Decompose a MAGI value into its IRMAA tier characteristics. Used by the supercharge-analysis
+// opportunity to show a user the cost of crossing into a higher tier vs. the tax saved from the
+// additional conversion room unlocked.
+export function classifyIrmaaTier(
+  lookbackMagi: number,
+  filingStatus: 'married_filing_jointly' | 'single'
+): IrmaaTierInfo {
+  const floorOf = (b: typeof IRMAA_BRACKETS_2025[number]) =>
+    filingStatus === 'married_filing_jointly' ? b.magiFloorMFJ : b.magiFloorSingle;
+  const people = filingStatus === 'married_filing_jointly' ? 2 : 1;
+
+  let tierIndex = 0;
+  for (let i = IRMAA_BRACKETS_2025.length - 1; i >= 0; i--) {
+    if (lookbackMagi >= floorOf(IRMAA_BRACKETS_2025[i])) {
+      tierIndex = i;
+      break;
+    }
+  }
+  const current = IRMAA_BRACKETS_2025[tierIndex];
+  const next = IRMAA_BRACKETS_2025[tierIndex + 1];
+  const magiFloor = floorOf(current);
+  const magiCeiling = next ? floorOf(next) : Infinity;
+  const annualSurchargeCouple =
+    (current.partBSurchargePerPerson + current.partDSurchargePerPerson) * people * 12;
+  const nextAnnualSurcharge = next
+    ? (next.partBSurchargePerPerson + next.partDSurchargePerPerson) * people * 12
+    : annualSurchargeCouple;
+
+  return {
+    tierIndex,
+    tierLabel: tierIndex === 0 ? 'No surcharge' : `Tier ${tierIndex}`,
+    magiFloor,
+    magiCeiling,
+    annualSurchargeCouple,
+    roomToNextTier: next ? magiCeiling - lookbackMagi : Infinity,
+    nextTierJump: nextAnnualSurcharge - annualSurchargeCouple,
+  };
 }
