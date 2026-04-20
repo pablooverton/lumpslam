@@ -133,7 +133,7 @@ const DEMOS: DemoEntry[] = [
       client: { name: 'Carlos', age: 54, birthYear: 1972, lifeExpectancy: 88, fullRetirementAge: 67, fraMonthlyBenefit: 2_600, socialSecurityClaimAge: 62 },
       spouse:  { name: 'Elena',  age: 51, birthYear: 1975, lifeExpectancy: 92, fullRetirementAge: 67, fraMonthlyBenefit: 1_200, socialSecurityClaimAge: 62 },
       filingStatus: 'married_filing_jointly',
-      stateOfResidence: 'NC', hasStateIncomeTax: true,
+      stateOfResidence: 'IL', hasStateIncomeTax: true,
       currentYear: 2026, retirementYearDesired: 2026,
       cobraMonths: 0, acaHouseholdSize: 2,
       retirementLocation: 'international',
