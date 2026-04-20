@@ -5,7 +5,7 @@ import {
 } from '../../src/domain/engine/savings-strategy';
 import type { SavingsStrategy } from '../../src/domain/types/profile';
 
-const combinedRate = 0.2925; // 24% federal + 5.25% NC
+const combinedRate = 0.30; // 24% federal + ~6% state (generic mid-range)
 
 describe('resolveSavingsStrategy', () => {
   it('routes to HSA first when HSA is first priority', () => {
