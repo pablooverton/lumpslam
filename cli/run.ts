@@ -42,6 +42,7 @@ import {
   printContingency,
   header,
 } from './format-output';
+import { runCompare, printCompare } from './compare';
 
 // ─── Profile JSON schema ──────────────────────────────────────────────────────
 // This is the format users write in their .json files.
@@ -108,7 +109,13 @@ interface ProfileInput {
   cobraMonths?: number;
   /** Number of people on ACA plan. Determines subsidy cliff: 2=$84,600 · 3=$106,120 · 4=$127,640. Default: 2 */
   acaHouseholdSize?: number;
-  /** Nominal annual portfolio growth rate as a percentage, e.g. 9 means 9%. Default: 7 */
+  /** REAL annual portfolio growth rate as a percentage, e.g. 6 means 6% real.
+   *  The engine treats all inputs (contributions, spending, conversions) as today's (real)
+   *  dollars and grows them at this rate. Typical values: 5% (conservative), 6% (Boglehead
+   *  60/40 baseline), 7% (historical equity average). Do NOT enter 9% "nominal" here — the
+   *  retirement-phase inflationFactor starts at 1.0 at retirement year (see inflation-indexed
+   *  conversion targets), so inputs must already be in real dollars.
+   *  Default: 6. */
   annualGrowthRate?: number;
   /** "us" | "international". International skips ACA season (no cliff). Default: "us" */
   retirementLocation?: 'us' | 'international';
@@ -270,6 +277,7 @@ Commands:
   ss                Social Security timing analysis
   opportunities     Six optimization opportunity scanner
   contingency       Risk assessment + widow's penalty
+  compare <file>    Strategy comparison harness (add --mc for Monte Carlo)
   all               All of the above
 
 Options:
@@ -285,11 +293,30 @@ Example:
 
   // Parse flags
   const jsonMode = args.includes('--json');
+  const withMonteCarlo = args.includes('--mc');
   const cleanArgs = args.filter((a) => !a.startsWith('--'));
 
   const filePath = resolve(process.cwd(), cleanArgs[0]);
   const command = cleanArgs[1] ?? 'scenarios';
   const commandArg = cleanArgs[2]; // e.g. number of years for 'seasons'
+
+  // `compare` is handled specially — it takes a strategies file path rather than running
+  // the standard simulation pipeline, so intercept before the shared loader runs.
+  if (command === 'compare') {
+    if (!commandArg) {
+      console.error('\x1b[31mError:\x1b[0m `compare` requires a strategies JSON file path.');
+      console.error('Example: npx tsx cli/run.ts profile.json compare strategies.json [--mc]');
+      process.exit(1);
+    }
+    try {
+      const runs = runCompare(filePath, resolve(process.cwd(), commandArg), withMonteCarlo);
+      printCompare(runs, jsonMode);
+    } catch (e) {
+      console.error(`\x1b[31mError running compare:\x1b[0m ${(e as Error).message}`);
+      process.exit(1);
+    }
+    return;
+  }
 
   // Load profile
   let loaded: ReturnType<typeof loadProfile>;
@@ -327,7 +354,11 @@ Example:
 
   function getContingency() {
     const ss = getSSComparison();
-    return buildContingencyReport(profile, assets, guardrails, retireNow, ss);
+    // Use the target-date scenario for widow's analysis — retireNow produces misleading
+    // survivor-coverage numbers for anyone not actually retiring today (portfolio is tiny
+    // and the person is still in accumulation). The target-date scenario reflects the
+    // actual retirement plan's portfolio and timing. See T4 in engine-validation notes.
+    return buildContingencyReport(profile, assets, guardrails, retireStated, ss);
   }
 
   // JSON output mode

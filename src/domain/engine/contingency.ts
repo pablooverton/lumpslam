@@ -96,9 +96,13 @@ function analyzeWidowsPenalty(
   const startingPortfolio = scenario.yearlyProjections[0]?.portfolioStartBalance ?? 0;
   const survivorLifeExpectancy =
     survivingSpouse === 'client' ? profile.client.lifeExpectancy : (profile.spouse?.lifeExpectancy ?? 90);
-  const survivorAge =
-    survivingSpouse === 'client' ? profile.client.age : (profile.spouse?.age ?? 60);
-  const survivorYearsInRetirement = Math.max(10, survivorLifeExpectancy - survivorAge);
+  // Use age at retirement (first projection year) rather than current age — otherwise the
+  // horizon is 50+ years for a 40-year-old, pushing SWR into the 3.8% long-horizon band
+  // even though the actual retirement starts much later.
+  const retirementAge = survivingSpouse === 'client'
+    ? (scenario.yearlyProjections[0]?.clientAge ?? profile.client.age)
+    : (scenario.yearlyProjections[0]?.spouseAge ?? profile.spouse?.age ?? 60);
+  const survivorYearsInRetirement = Math.max(10, survivorLifeExpectancy - retirementAge);
   const survivorSWR = survivorYearsInRetirement <= 25 ? 0.045 : survivorYearsInRetirement <= 35 ? 0.040 : 0.038;
   const portfolioWithdrawalCapacity = startingPortfolio * survivorSWR;
 

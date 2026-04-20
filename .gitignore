@@ -46,3 +46,13 @@ next-env.d.ts
 *.mov
 *.webm
 inspiration/
+
+# personal financial data — NEVER commit. Use alice-bob-*.json examples instead.
+# Any profile with real names, balances, salaries, or SS estimates MUST be gitignored.
+# See AGENTS.md for the PII-guard rule.
+cli/personal-*.json
+cli/*-personal.json
+cli/private-*.json
+cli/alice-bob-korea-*.json
+cli/strategies/private-*.json
+cli/strategies/alice-bob-korea-*.json

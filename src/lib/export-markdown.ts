@@ -65,7 +65,7 @@ export function buildMarkdownExport(params: {
   lines.push(`| Retirement Location | ${profile.retirementLocation === 'international' ? 'International (no ACA cliff)' : 'US'} |`);
   lines.push(`| COBRA Months | ${profile.cobraMonths} |`);
   lines.push(`| ACA Household Size | ${profile.acaHouseholdSize ?? 2} |`);
-  lines.push(`| Annual Growth Rate | ${((profile.annualGrowthRate ?? 0.07) * 100).toFixed(1)}% nominal |`);
+  lines.push(`| Annual Growth Rate | ${((profile.annualGrowthRate ?? 0.06) * 100).toFixed(1)}% real |`);
   if (profile.targetBracket) {
     lines.push(`| Target Conversion Bracket | Fill to ${profile.targetBracket} ceiling |`);
   }

@@ -1,7 +1,7 @@
 import type { ClientProfile } from '../types/profile';
 import type { AssetSnapshot } from '../types/assets';
 import type { SpendingProfile } from '../types/spending';
-import type { GuardrailConfig, ScenarioResult, ScenarioType } from '../types/scenarios';
+import type { GuardrailConfig, LifetimeAggregates, ScenarioResult, ScenarioType, StrategyTotalsSummary } from '../types/scenarios';
 import type { YearlyProjection, IncomeBreakdown, WithdrawalBreakdown, TaxLiability, RothConversionEvent } from '../types/simulation';
 import { classifySeasonForYear, calculateMAGI, assessAcaEligibility, calculateIrmaaSurcharge, getCobraWindowEnd } from './seasons';
 import { calculateRothConversion } from './roth-conversion';
@@ -9,12 +9,15 @@ import { calculateRMD, projectInheritedIraDistributions } from './rmd';
 import { calculateBenefitAtClaimAge } from './social-security';
 import { calculateOrdinaryIncomeTax, getMarginalRate } from './tax-utils';
 import { calculateSpendingCapacity } from './spending-capacity';
+import { resolveSavingsStrategy, aggregateStrategyTotals, type ResolvedYearAllocation } from './savings-strategy';
 import { FEDERAL_INCOME_TAX_BRACKETS_2025, STANDARD_DEDUCTION_2025, getBracketCeiling } from '../constants/tax-brackets';
 import { getAcaCliff } from '../constants/aca-thresholds';
 import { RMD_START_AGE } from '../constants/rmd-tables';
 import { getStateInfo } from '../constants/states';
 
-const DEFAULT_GROWTH_RATE = 0.08;
+// REAL growth rate default. Engine models everything in today's real dollars.
+// 6% real ≈ 9% nominal at 3% inflation — Boglehead 60/40 baseline.
+const DEFAULT_GROWTH_RATE = 0.06;
 
 export function runSimulation(
   profile: ClientProfile,
@@ -57,6 +60,12 @@ export function runSimulation(
   // Accumulation phase: grow balances year-by-year, adding annual contributions each year.
   // This models the reality of ongoing 401k/Roth/brokerage deposits during working years.
   // Without contributions, the engine only compounds current balances — understating retirement assets.
+  //
+  // Two paths:
+  //   1. profile.savingsStrategy — rule-based allocation of free cash flow (preferred for
+  //      strategy-comparison work; see src/domain/engine/savings-strategy.ts).
+  //   2. profile.annualContributions — flat per-year contributions (legacy path, backward compat).
+  // If both are set, savingsStrategy takes precedence.
   const contrib = profile.annualContributions;
   let pretaxBalance = assets.totalPretax;
   let rothBalance = assets.totalRoth;
@@ -64,12 +73,63 @@ export function runSimulation(
   let inheritedIraBalance = assets.totalInheritedIra;
   let hsaBalance = assets.totalHsa;
 
+  // Tracked across accumulation years for lifetime-aggregate reporting.
+  // Working-year conversion tax is paid in nominal dollars the year it is incurred;
+  // we accumulate it in nominal and deflate at aggregation time.
+  const workingYearConversionTaxByYear: number[] = [];
+
+  // Resolved per-year allocations — populated only when savingsStrategy is set.
+  let resolvedAllocations: ResolvedYearAllocation[] | null = null;
+  if (profile.savingsStrategy) {
+    resolvedAllocations = resolveSavingsStrategy(
+      profile.savingsStrategy,
+      profile.currentYear,
+      workingYears,
+    );
+  }
+
   for (let y = 0; y < workingYears; y++) {
-    pretaxBalance    = (pretaxBalance    + (contrib?.pretax    ?? 0)) * (1 + growthRate);
-    rothBalance      = (rothBalance      + (contrib?.roth      ?? 0)) * (1 + growthRate);
-    brokerageBalance = (brokerageBalance + (contrib?.brokerage ?? 0)) * (1 + growthRate);
-    inheritedIraBalance = inheritedIraBalance                       * (1 + growthRate);
-    hsaBalance          = (hsaBalance + (contrib?.hsa ?? 0))       * (1 + growthRate);
+    let addPretax = 0;
+    let addRoth = 0;
+    let addBrokerage = 0;
+    let addHsa = 0;
+    let wyConversion = 0;
+    let wyConversionTax = 0;
+
+    if (resolvedAllocations) {
+      const a = resolvedAllocations[y];
+      addPretax    = a.pretaxContribution + a.employerMatch;
+      addRoth      = a.rothContribution;
+      addBrokerage = a.brokerageContribution;
+      addHsa       = a.hsaContribution;
+      wyConversion = a.workingYearConversion;
+      wyConversionTax = a.workingYearConversionTax;
+    } else {
+      addPretax    = contrib?.pretax    ?? 0;
+      addRoth      = contrib?.roth      ?? 0;
+      addBrokerage = contrib?.brokerage ?? 0;
+      addHsa       = contrib?.hsa       ?? 0;
+    }
+
+    // Apply contributions first, then working-year conversion (cap at available pretax),
+    // then growth. Order matters: conversion must move dollars *before* growth so that the
+    // converted dollars compound inside the Roth wrapper rather than the pre-tax.
+    pretaxBalance    = pretaxBalance    + addPretax;
+    rothBalance      = rothBalance      + addRoth;
+    brokerageBalance = brokerageBalance + addBrokerage;
+    hsaBalance       = hsaBalance       + addHsa;
+
+    const actualConversion = Math.min(wyConversion, pretaxBalance);
+    pretaxBalance -= actualConversion;
+    rothBalance   += actualConversion;
+
+    pretaxBalance       = pretaxBalance       * (1 + growthRate);
+    rothBalance         = rothBalance         * (1 + growthRate);
+    brokerageBalance    = brokerageBalance    * (1 + growthRate);
+    inheritedIraBalance = inheritedIraBalance * (1 + growthRate);
+    hsaBalance          = hsaBalance          * (1 + growthRate);
+
+    workingYearConversionTaxByYear.push(wyConversionTax);
   }
 
   const clientSSMonthly = calculateBenefitAtClaimAge(
@@ -101,7 +161,7 @@ export function runSimulation(
   //   1. conversion_primary if targetBracket is set (user is targeting a bracket ceiling)
   //   2. conversion_primary if no brokerage at retirement — surplus-driven conversions require
   //      brokerage; without it, withdrawal_sequencing silently produces zero conversions for
-  //      profiles that are entirely pre-tax (e.g. a user: $0 brokerage throughout).
+  //      profiles that are entirely pre-tax (no taxable brokerage throughout accumulation).
   //   3. withdrawal_sequencing otherwise
   const effectiveEngine: 'withdrawal_sequencing' | 'conversion_primary' =
     profile.spendingEngine === 'conversion_primary'
@@ -270,7 +330,7 @@ export function runSimulation(
       // Taxes and all spending are funded from Roth. MAGI = conversion + SS only.
       //
       // Best for: no-brokerage, high pre-tax balance, $242k/yr engine strategies.
-      // Matches the elective-conversion plan: pretax → Roth ($242k), Roth pays taxes + living.
+      // Matches the elective-conversion archetype: pretax → Roth ($242k), Roth pays taxes + living.
 
       // Bracket-ceiling conversion: fill exactly to the target bracket in real 2025 dollars.
       // Formula: nominalMagiCapacity = (bracketCeiling + stdDeduction) × inflationFactor
@@ -580,6 +640,107 @@ export function runSimulation(
     }
   }
 
+  // ─── Lifetime aggregates ──────────────────────────────────────────────────
+  // Strategy-comparison harness needs a single scalar per strategy on several
+  // axes: total tax paid (min = tax-minimizing), terminal wealth (max = legacy),
+  // early-retirement spending (max = enjoyment), pre-tax depletion year.
+  // All amounts deflated to current-year (profile.currentYear) real dollars.
+  const inflationRate = spending.inflationRate;
+  const deflate = (nominal: number, yearOffset: number): number =>
+    nominal / Math.pow(1 + inflationRate, yearOffset);
+
+  // Working-year conversion tax (nominal) → real. y-offset is the accumulation year index.
+  const accumulationConversionTaxReal = workingYearConversionTaxByYear.reduce(
+    (sum, nominalTax, y) => sum + deflate(nominalTax, y),
+    0,
+  );
+
+  // Retirement-phase tax: sum federal + state per year from yearlyProjections,
+  // deflating nominal amounts to real current-year dollars.
+  let retirementFederalTaxReal = 0;
+  let retirementStateTaxReal = 0;
+  for (const proj of yearlyProjections) {
+    const yOffset = proj.year - profile.currentYear;
+    retirementFederalTaxReal += deflate(proj.taxLiability.totalFederalTax, yOffset);
+    retirementStateTaxReal   += deflate(proj.taxLiability.stateTax,        yOffset);
+  }
+
+  // Working-year state tax on conversions (proportion of combined rate that is state).
+  const combinedRate = profile.savingsStrategy?.marginalTaxRateFedState ?? 0;
+  const stateRateForStrategy = combinedRate > 0 && stateRate > 0
+    ? Math.min(stateRate / combinedRate, 1)
+    : 0;
+  const accumulationStateTaxReal = accumulationConversionTaxReal * stateRateForStrategy;
+  const accumulationFederalTaxReal = accumulationConversionTaxReal - accumulationStateTaxReal;
+
+  const lifetimeFederalTaxReal = retirementFederalTaxReal + accumulationFederalTaxReal;
+  const lifetimeStateTaxReal   = retirementStateTaxReal   + accumulationStateTaxReal;
+
+  // Terminal balances: last projection's end balances, deflated to real.
+  const last = yearlyProjections[yearlyProjections.length - 1];
+  const terminalYearOffset = last ? last.year - profile.currentYear : 0;
+  const terminalPretaxReal    = last ? deflate(last.pretaxEndBalance,    terminalYearOffset) : 0;
+  const terminalRothReal      = last ? deflate(last.rothEndBalance,      terminalYearOffset) : 0;
+  const terminalBrokerageReal = last ? deflate(last.brokerageEndBalance, terminalYearOffset) : 0;
+  // hsaBalance is tracked as a closure-level number; it gets drawn for healthcare through the loop.
+  const terminalHsaReal = deflate(hsaBalance, terminalYearOffset);
+  const terminalTotalReal = terminalPretaxReal + terminalRothReal + terminalBrokerageReal + terminalHsaReal;
+
+  // Pre-tax depletion: first year pretaxEndBalance drops to ~zero.
+  // Using $1000 threshold (multi-million-scale engine; sub-$1k balance is effectively depleted).
+  const depletionProj = yearlyProjections.find((p) => p.pretaxEndBalance <= 1000);
+  const pretaxDepletionYear = depletionProj?.year ?? null;
+
+  // Early-retirement spending: sum of annualSpending ages 55–65 (the "enjoyment window"),
+  // reconstructed in real current-year dollars. YearlyProjection doesn't surface per-year
+  // annualSpending, so we approximate from withdrawals + SS income + taxes (the outflow side).
+  let earlyRetirementSpendingReal = 0;
+  for (const proj of yearlyProjections) {
+    if (proj.clientAge >= 55 && proj.clientAge <= 65) {
+      const yOffset = proj.year - profile.currentYear;
+      const spendingProxy =
+        proj.withdrawals.fromRoth +
+        proj.withdrawals.fromBrokerage +
+        (proj.withdrawals.fromPretax - proj.income.requiredMinimumDistribution) +
+        proj.income.socialSecurityClient + proj.income.socialSecuritySpouse -
+        proj.taxLiability.totalFederalTax - proj.taxLiability.stateTax;
+      earlyRetirementSpendingReal += Math.max(0, deflate(spendingProxy, yOffset));
+    }
+  }
+
+  const strategyTotals: StrategyTotalsSummary | null = resolvedAllocations
+    ? (() => {
+        const t = aggregateStrategyTotals(resolvedAllocations);
+        return {
+          totalPretaxContributions:      t.totalPretaxContributions,
+          totalRothContributions:        t.totalRothContributions,
+          totalHsaContributions:         t.totalHsaContributions,
+          totalBrokerageContributions:   t.totalBrokerageContributions,
+          totalWorkingYearConversions:   t.totalWorkingYearConversions,
+          totalEmployerMatch:            t.totalEmployerMatch,
+          totalFreeCashFlowConsumed:     t.totalFreeCashFlowConsumed,
+          totalFreeCashFlowRemaining:    t.totalFreeCashFlowRemaining,
+        };
+      })()
+    : null;
+
+  const lifetime: LifetimeAggregates = {
+    federalTaxPaid: lifetimeFederalTaxReal,
+    stateTaxPaid: lifetimeStateTaxReal,
+    totalTaxPaid: lifetimeFederalTaxReal + lifetimeStateTaxReal,
+    workingYearConversionTaxPaid: accumulationConversionTaxReal,
+    terminal: {
+      pretax: terminalPretaxReal,
+      roth: terminalRothReal,
+      brokerage: terminalBrokerageReal,
+      hsa: terminalHsaReal,
+      total: terminalTotalReal,
+    },
+    pretaxDepletionYear,
+    earlyRetirementSpending: earlyRetirementSpendingReal,
+    strategyTotals,
+  };
+
   return {
     scenarioType,
     retirementYear,
@@ -591,5 +752,6 @@ export function runSimulation(
     lowerGuardrailDollarDrop: capacityResult.lowerGuardrailDollarDrop,
     lowerGuardrailSpendingCutDollars: capacityResult.lowerGuardrailSpendingCutDollars,
     yearlyProjections,
+    lifetime,
   };
 }

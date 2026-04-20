@@ -283,11 +283,11 @@ function assessConversionTreadmill(
   const estLifetimeSavings = treadmill ? additionalAnnualConversion * 0.08 * conversionYears.length : 0;
   return {
     id: 'conversion_treadmill',
-    label: 'Conversion Treadmill Check',
+    label: treadmill ? 'Conversion Treadmill Check' : 'Conversion Treadmill — Healthy',
     applicable: treadmill,
     reason: treadmill
       ? `Pre-tax is growing ~$${Math.round(annualGrowthDollars).toLocaleString()}/yr while conversions only move ~$${Math.round(avgConversion).toLocaleString()}/yr. At this rate the pre-tax balance won't meaningfully shrink before age 73, and RMDs will still be sized to push you into high brackets. Consider raising target bracket to 24% to actually drain the account.`
-      : `Conversions (~$${Math.round(avgConversion).toLocaleString()}/yr) are outpacing pre-tax growth (~$${Math.round(annualGrowthDollars).toLocaleString()}/yr) — the balance is genuinely shrinking over time.`,
+      : `✓ Check passed: conversions (~$${Math.round(avgConversion).toLocaleString()}/yr) outpace pre-tax growth (~$${Math.round(annualGrowthDollars).toLocaleString()}/yr). Pre-tax balance is genuinely shrinking. No action needed.`,
     estimatedAnnualValue: null,
     estimatedLifetimeValue: treadmill ? estLifetimeSavings : null,
   };
