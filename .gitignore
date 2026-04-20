@@ -45,7 +45,6 @@ next-env.d.ts
 *.mp4
 *.mov
 *.webm
-inspiration/
 
 # personal financial data — NEVER commit. Use alice-bob-*.json examples instead.
 # Any profile with real names, balances, salaries, or SS estimates MUST be gitignored.
