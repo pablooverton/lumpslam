@@ -35,26 +35,27 @@ export default function OpportunitiesPage() {
       )}
 
       <div className="space-y-3">
-        {opportunities.assessments.map((a) => (
-          <div
-            key={a.id}
-            className={`rounded-lg border p-4 ${
-              a.applicable
-                ? 'border-green-800 bg-green-950/30'
-                : 'border-gray-700 bg-gray-900'
-            }`}
-          >
+        {opportunities.assessments.map((a) => {
+          const status = a.status ?? (a.applicable ? 'actionable' : 'n/a');
+          const cardClass =
+            status === 'actionable' ? 'border-green-800 bg-green-950/30'
+            : status === 'healthy'  ? 'border-emerald-800 bg-emerald-950/20'
+            : 'border-gray-700 bg-gray-900';
+          const badgeClass =
+            status === 'actionable' ? 'bg-green-700 text-green-100'
+            : status === 'healthy'  ? 'bg-emerald-700 text-emerald-100'
+            : 'bg-gray-700 text-gray-400';
+          const badgeText =
+            status === 'actionable' ? 'Applicable'
+            : status === 'healthy'  ? 'Healthy'
+            : 'Not Applicable';
+          return (
+          <div key={a.id} className={`rounded-lg border p-4 ${cardClass}`}>
             <div className="flex items-start justify-between gap-4">
               <div>
                 <div className="flex items-center gap-2 mb-1">
-                  <span
-                    className={`text-xs font-medium px-2 py-0.5 rounded ${
-                      a.applicable
-                        ? 'bg-green-700 text-green-100'
-                        : 'bg-gray-700 text-gray-400'
-                    }`}
-                  >
-                    {a.applicable ? 'Applicable' : 'Not Applicable'}
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded ${badgeClass}`}>
+                    {badgeText}
                   </span>
                   <span className="font-medium text-white text-sm">{a.label}</span>
                 </div>
@@ -70,7 +71,8 @@ export default function OpportunitiesPage() {
               )}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

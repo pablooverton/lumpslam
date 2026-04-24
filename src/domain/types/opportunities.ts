@@ -11,10 +11,13 @@ export type OpportunityId =
   | 'cobra_brokerage_preservation'
   | 'roth_as_aca_bridge';
 
+export type OpportunityStatus = 'actionable' | 'healthy' | 'n/a';
+
 export interface OpportunityAssessment {
   id: OpportunityId;
   label: string;
   applicable: boolean;
+  status?: OpportunityStatus;
   reason: string;
   estimatedAnnualValue: number | null;
   estimatedLifetimeValue: number | null;

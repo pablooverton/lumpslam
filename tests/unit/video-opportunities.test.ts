@@ -120,6 +120,54 @@ describe('supercharge_irmaa_tier2 — high-balance conversion strategy', () => {
   });
 });
 
+describe('conversion_treadmill — status field distinguishes healthy from n/a', () => {
+  function projectionWithConversion(conversionAmount: number): YearlyProjection {
+    return {
+      year: 2032,
+      clientAge: 61,
+      spouseAge: 61,
+      season: 'cobra',
+      income: { socialSecurityClient: 0, socialSecuritySpouse: 0, requiredMinimumDistribution: 0, inheritedIraDistribution: 0, otherIncome: 0, total: 0 },
+      withdrawals: { fromPretax: 0, fromBrokerage: 0, fromRoth: 0, total: 0 },
+      rothConversion: { conversionAmount, taxOwed: 0, taxSource: 'brokerage', marginalRate: 0.22 },
+      taxLiability: { ordinaryIncomeTax: 0, capitalGainsTax: 0, rothConversionTax: 0, totalFederalTax: 0, stateTax: 0, effectiveRate: 0 },
+      portfolioStartBalance: 1_000_000,
+      portfolioEndBalance: 1_000_000,
+      pretaxEndBalance: 1_000_000,
+      rothEndBalance: 0,
+      brokerageEndBalance: 0,
+      magi: 0,
+      acaSubsidyEligible: false,
+      estimatedAcaSavings: 0,
+      irmaaApplies: false,
+      irmaaSurcharge: 0,
+    };
+  }
+
+  it('status is "healthy" when conversions outpace pre-tax growth', () => {
+    // At 8% growth, $1M pretax grows by $80k/yr. $200k conversion outpaces it.
+    const assets = mockAssets([
+      { id: 'p', label: 'Pretax', owner: 'client', type: 'pretax_ira', currentBalance: 1_000_000 },
+    ]);
+    const report = assessOpportunities(baseProfile, assets, [projectionWithConversion(200_000)]);
+    const treadmill = report.assessments.find((a) => a.id === 'conversion_treadmill');
+    expect(treadmill?.applicable).toBe(false);
+    expect(treadmill?.status).toBe('healthy');
+    expect(treadmill?.label).toMatch(/Healthy/);
+  });
+
+  it('status is "actionable" when pre-tax growth outpaces conversions', () => {
+    // At 8% growth, $2M pretax grows by $160k/yr. $50k conversion can't keep up.
+    const assets = mockAssets([
+      { id: 'p', label: 'Pretax', owner: 'client', type: 'pretax_ira', currentBalance: 2_000_000 },
+    ]);
+    const report = assessOpportunities(baseProfile, assets, [projectionWithConversion(50_000)]);
+    const treadmill = report.assessments.find((a) => a.id === 'conversion_treadmill');
+    expect(treadmill?.applicable).toBe(true);
+    expect(treadmill?.status).toBe('actionable');
+  });
+});
+
 describe('roth_as_aca_bridge — MAGI-invisible withdrawal option', () => {
   it('flags when ACA window + Roth balance both exist', () => {
     const assets = mockAssets([

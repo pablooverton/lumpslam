@@ -285,6 +285,7 @@ function assessConversionTreadmill(
     id: 'conversion_treadmill',
     label: treadmill ? 'Conversion Treadmill Check' : 'Conversion Treadmill — Healthy',
     applicable: treadmill,
+    status: treadmill ? 'actionable' : 'healthy',
     reason: treadmill
       ? `Pre-tax is growing ~$${Math.round(annualGrowthDollars).toLocaleString()}/yr while conversions only move ~$${Math.round(avgConversion).toLocaleString()}/yr. At this rate the pre-tax balance won't meaningfully shrink before age 73, and RMDs will still be sized to push you into high brackets. Consider raising target bracket to 24% to actually drain the account.`
       : `✓ Check passed: conversions (~$${Math.round(avgConversion).toLocaleString()}/yr) outpace pre-tax growth (~$${Math.round(annualGrowthDollars).toLocaleString()}/yr). Pre-tax balance is genuinely shrinking. No action needed.`,

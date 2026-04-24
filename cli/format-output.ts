@@ -293,7 +293,11 @@ export function printOpportunities(report: OpportunityReport): void {
   console.log();
 
   for (const a of report.assessments) {
-    const badge = a.applicable ? `${G}[✓ APPLICABLE]${RS}` : `${DIM}[  n/a      ]${RS}`;
+    const status = a.status ?? (a.applicable ? 'actionable' : 'n/a');
+    const badge =
+      status === 'actionable' ? `${G}[✓ APPLICABLE]${RS}`
+      : status === 'healthy'  ? `${G}[✓ HEALTHY   ]${RS}`
+      : `${DIM}[  n/a      ]${RS}`;
     console.log(`  ${badge}  ${B}${a.label}${RS}`);
     console.log(`           ${DIM}${a.reason}${RS}`);
     if (a.estimatedLifetimeValue != null) {
