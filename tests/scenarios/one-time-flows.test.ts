@@ -146,6 +146,32 @@ describe('T6 — lumpyExpenses sourced from brokerage in conversion_primary', ()
 
 // ─── T7: healthcareStartAge gates annualHealthcareCost ───────────────────────
 
+describe('hsaAnnualSpending — drains HSA in accumulation and retirement', () => {
+  it('zero default preserves prior behavior (HSA grows untouched in accumulation)', () => {
+    const result = runSimulation(baseProfile, assets, baseSpending, guardrails, 'retire_at_stated_date');
+    // First year of retirement (2041) — HSA grew for 15 years untouched
+    const firstYear = result.yearlyProjections[0];
+    expect(firstYear.year).toBe(2041);
+    // HSA isn't surfaced separately on YearlyProjection; verify via portfolio total instead
+    expect(firstYear.portfolioStartBalance).toBeGreaterThan(4_000_000);
+  });
+
+  it('$4k/yr meaningfully reduces terminal HSA vs. zero', () => {
+    const noSpend = runSimulation(baseProfile, assets, baseSpending, guardrails, 'retire_at_stated_date');
+    const withSpend = runSimulation(
+      baseProfile,
+      assets,
+      { ...baseSpending, hsaAnnualSpending: 4_000 },
+      guardrails,
+      'retire_at_stated_date'
+    );
+    const noSpendEnd  = noSpend.yearlyProjections[noSpend.yearlyProjections.length - 1].portfolioEndBalance;
+    const withSpendEnd = withSpend.yearlyProjections[withSpend.yearlyProjections.length - 1].portfolioEndBalance;
+    // The $4k/yr drain compounds over ~50 years; terminal portfolio should be meaningfully lower.
+    expect(noSpendEnd - withSpendEnd).toBeGreaterThan(100_000);
+  });
+});
+
 describe('T7 — annualHealthcareCost gated by healthcareStartAge', () => {
   it('default (65): HSA is not drained for healthcare in pre-Medicare years', () => {
     // Run with $30k starting HSA. Without T7, $15k/yr × 10 yrs would zero it out by age 65.

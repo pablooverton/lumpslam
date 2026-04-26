@@ -43,4 +43,12 @@ export interface SpendingProfile {
   // baseAnnualSpending. Set to retirement age if your healthcareCost truly starts
   // at retirement (e.g. private health insurance abroad).
   healthcareStartAge?: number;      // default 65
+
+  // Running HSA-eligible healthcare spend (real dollars, applies always — accumulation
+  // and retirement). Covers deductibles, copays, dental, vision, OTC qualifying expenses.
+  // Drains HSA every year regardless of healthcareStartAge. Real households spend their
+  // HSA down continuously even while contributing; setting this to 0 (default) treats the
+  // HSA as a pure investment vehicle, which overstates terminal HSA balance.
+  // Typical: $3-5k/yr for a family of 4-6 with employer coverage.
+  hsaAnnualSpending?: number;
 }

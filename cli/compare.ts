@@ -56,6 +56,7 @@ interface SpendingInput {
   mortgagePaidOffAge?: number;
   annualHealthcareCost?: number;
   healthcareStartAge?: number;
+  hsaAnnualSpending?: number;
 }
 
 interface ProfileInput {
@@ -172,6 +173,9 @@ function buildBase(input: ProfileInput): {
       annualHealthcareCost: sp.annualHealthcareCost,
     }),
     ...(sp.healthcareStartAge !== undefined && { healthcareStartAge: sp.healthcareStartAge }),
+    ...(sp.hsaAnnualSpending !== undefined && sp.hsaAnnualSpending > 0 && {
+      hsaAnnualSpending: sp.hsaAnnualSpending,
+    }),
   };
 
   const g = input.guardrails ?? {};

@@ -100,6 +100,10 @@ interface SpendingInput {
    *  pre-Medicare bridges, the default avoids draining the HSA for healthcare during years
    *  when ACA is the actual coverage. */
   healthcareStartAge?: number;
+  /** Running HSA-eligible healthcare spend in real dollars. Drains HSA every year from
+   *  currentYear onward (accumulation and retirement). Covers deductibles, copays, dental,
+   *  vision, OTC qualifying expenses. Set ~$3-5k for a family with employer coverage. */
+  hsaAnnualSpending?: number;
 }
 
 interface ProfileInput {
@@ -261,6 +265,9 @@ function loadProfile(filePath: string): {
       annualHealthcareCost: sp.annualHealthcareCost,
     }),
     ...(sp.healthcareStartAge !== undefined && { healthcareStartAge: sp.healthcareStartAge }),
+    ...(sp.hsaAnnualSpending !== undefined && sp.hsaAnnualSpending > 0 && {
+      hsaAnnualSpending: sp.hsaAnnualSpending,
+    }),
   };
 
   // ── Guardrails

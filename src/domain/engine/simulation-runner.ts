@@ -119,6 +119,12 @@ export function runSimulation(
     brokerageBalance = brokerageBalance + addBrokerage;
     hsaBalance       = hsaBalance       + addHsa;
 
+    // Running HSA spend (deductibles, copays, dental, vision) drains the HSA each year
+    // during accumulation as well as retirement. Without this, the HSA acts like a pure
+    // investment vehicle, overstating its terminal balance by ~2-3x for typical families.
+    const hsaRunningSpend = spending.hsaAnnualSpending ?? 0;
+    hsaBalance = Math.max(0, hsaBalance - hsaRunningSpend);
+
     const actualConversion = Math.min(wyConversion, pretaxBalance);
     pretaxBalance -= actualConversion;
     rothBalance   += actualConversion;
@@ -288,9 +294,13 @@ export function runSimulation(
     // Pre-Medicare bridge years should fund coverage from baseAnnualSpending instead, since the HSA
     // can't pay ACA premiums. annualHealthcareCost typically represents Medicare Part B/D + Medigap.
     const healthcareStartAge = spending.healthcareStartAge ?? 65;
-    const rawHealthcareCost = clientAge >= healthcareStartAge
+    const medicareCost = clientAge >= healthcareStartAge
       ? (spending.annualHealthcareCost ?? 0) * inflationFactor
       : 0;
+    // Running HSA spend (deductibles, copays, dental, vision) applies in retirement too.
+    // Inflation-indexed because real-world healthcare costs grow with inflation.
+    const runningHsaSpend = (spending.hsaAnnualSpending ?? 0) * inflationFactor;
+    const rawHealthcareCost = medicareCost + runningHsaSpend;
     const fromHsa = Math.min(rawHealthcareCost, hsaBalance);
     const healthcareOverflow = rawHealthcareCost - fromHsa;
 
