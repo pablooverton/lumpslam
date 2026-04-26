@@ -50,10 +50,12 @@ interface SpendingInput {
   lifestyleTaperAge?: number;
   charitable?: number;
   lumpyExpenses?: Array<{ year: number; label: string; amount: number }>;
+  oneTimeIncomes?: Array<{ year: number; label: string; amount: number; taxable?: boolean }>;
   inflationRate?: number;
   mortgageAnnualPayment?: number;
   mortgagePaidOffAge?: number;
   annualHealthcareCost?: number;
+  healthcareStartAge?: number;
 }
 
 interface ProfileInput {
@@ -150,6 +152,9 @@ function buildBase(input: ProfileInput): {
   const lumpy: OneTimeExpense[] = (sp.lumpyExpenses ?? []).map((e) => ({
     year: e.year, label: e.label, amount: e.amount,
   }));
+  const incomes = (sp.oneTimeIncomes ?? []).map((i) => ({
+    year: i.year, label: i.label, amount: i.amount, taxable: i.taxable,
+  }));
   const spending: SpendingProfile = {
     baseAnnualSpending: sp.essential,
     travelBudgetEarly: sp.lifestyleActive ?? 0,
@@ -157,6 +162,7 @@ function buildBase(input: ProfileInput): {
     travelTaperStartAge: sp.lifestyleTaperAge ?? 75,
     charitableGivingAnnual: sp.charitable ?? 0,
     oneTimeExpenses: lumpy,
+    ...(incomes.length > 0 && { oneTimeIncomes: incomes }),
     inflationRate: (sp.inflationRate ?? 3) / 100,
     ...(sp.mortgageAnnualPayment && sp.mortgageAnnualPayment > 0 && {
       mortgageAnnualPayment: sp.mortgageAnnualPayment,
@@ -165,6 +171,7 @@ function buildBase(input: ProfileInput): {
     ...(sp.annualHealthcareCost && sp.annualHealthcareCost > 0 && {
       annualHealthcareCost: sp.annualHealthcareCost,
     }),
+    ...(sp.healthcareStartAge !== undefined && { healthcareStartAge: sp.healthcareStartAge }),
   };
 
   const g = input.guardrails ?? {};

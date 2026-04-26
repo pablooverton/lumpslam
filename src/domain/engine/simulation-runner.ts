@@ -258,6 +258,20 @@ export function runSimulation(
     const season = classifySeasonForYear(year, profile, cobraEndYear);
     const inflationFactor = Math.pow(1 + spending.inflationRate, yearIndex);
 
+    // T5: one-time cash injections (house sale proceeds, inheritance) land in brokerage
+    // at the start of the year, before withdrawals/conversions. Amount is in real dollars.
+    const oneTimeIncomeThisYear = (spending.oneTimeIncomes ?? [])
+      .filter((i) => i.year === year)
+      .reduce((sum, i) => sum + i.amount, 0);
+    if (oneTimeIncomeThisYear > 0) {
+      brokerageBalance += oneTimeIncomeThisYear;
+    }
+    // Taxable injections (rare) bump MAGI for the year — track separately so the
+    // conversion engine can subtract its room from the bracket capacity.
+    const taxableOneTimeIncome = (spending.oneTimeIncomes ?? [])
+      .filter((i) => i.year === year && i.taxable === true)
+      .reduce((sum, i) => sum + i.amount, 0);
+
     const travelBudget =
       clientAge >= spending.travelTaperStartAge
         ? spending.travelBudgetLate
@@ -270,8 +284,13 @@ export function runSimulation(
         ? spending.mortgageAnnualPayment!
         : 0;
 
-    // HSA covers healthcare costs first; overflow hits spending pool
-    const rawHealthcareCost = (spending.annualHealthcareCost ?? 0) * inflationFactor;
+    // T7: HSA-routed healthcare costs only apply at/after healthcareStartAge (default 65 = Medicare).
+    // Pre-Medicare bridge years should fund coverage from baseAnnualSpending instead, since the HSA
+    // can't pay ACA premiums. annualHealthcareCost typically represents Medicare Part B/D + Medigap.
+    const healthcareStartAge = spending.healthcareStartAge ?? 65;
+    const rawHealthcareCost = clientAge >= healthcareStartAge
+      ? (spending.annualHealthcareCost ?? 0) * inflationFactor
+      : 0;
     const fromHsa = Math.min(rawHealthcareCost, hsaBalance);
     const healthcareOverflow = rawHealthcareCost - fromHsa;
 
@@ -346,11 +365,15 @@ export function runSimulation(
         FEDERAL_INCOME_TAX_BRACKETS_2025
       );
       const nominalMagiCapacity = (bracketCeiling + stdDeduction) * inflationFactor;
-      const conversionTarget = Math.max(0, nominalMagiCapacity - rmd - ssIncludable - inheritedDist);
+      // Taxable one-time income (rare) consumes bracket room before the conversion.
+      const conversionTarget = Math.max(
+        0,
+        nominalMagiCapacity - rmd - ssIncludable - inheritedDist - taxableOneTimeIncome
+      );
       const conversionAmount = Math.min(conversionTarget, pretaxBalance);
 
-      // MAGI = conversion + RMD + SS (85% includable) + inherited IRA distributions
-      const magiBase = conversionAmount + rmd + ssIncludable + inheritedDist;
+      // MAGI = conversion + RMD + SS (85% includable) + inherited IRA distributions + taxable injection
+      const magiBase = conversionAmount + rmd + ssIncludable + inheritedDist + taxableOneTimeIncome;
 
       // Deflate nominal MAGI to 2025 real dollars, subtract standard deduction, calculate
       // tax in real terms, then scale back to nominal. Models IRS bracket inflation-indexing.
@@ -360,8 +383,12 @@ export function runSimulation(
       const totalTax = realTax * inflationFactor;
       const marginalRate = getMarginalRate(realTaxableIncome, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025);
 
-      // Roth funds spending net of SS income (SS directly offsets spending needs)
-      const rothSpendingDraw = Math.max(0, annualSpending - totalSSAnnual);
+      // T6: lumpy expenses (e.g. rebuy a house) draw from brokerage first, Roth as overflow.
+      // Recurring spending (annualSpending minus oneTimeExpense) still funds from Roth net of SS.
+      const recurringSpending = Math.max(0, annualSpending - oneTimeExpense);
+      const lumpyFromBrokerage = Math.min(oneTimeExpense, brokerageBalance);
+      const lumpyOverflowToRoth = oneTimeExpense - lumpyFromBrokerage;
+      const rothSpendingDraw = Math.max(0, recurringSpending - totalSSAnnual) + lumpyOverflowToRoth;
 
       // If Roth can't cover spending + taxes, draw emergency amount from pretax
       const totalRothNeed = totalTax + rothSpendingDraw;
@@ -380,9 +407,9 @@ export function runSimulation(
 
       withdrawals = {
         fromPretax: rmd + emergencyPretaxDraw, // only RMD and emergency; spending is from Roth
-        fromBrokerage: 0,
+        fromBrokerage: lumpyFromBrokerage,
         fromRoth: rothSpendingDraw,
-        total: rmd + emergencyPretaxDraw + rothSpendingDraw,
+        total: rmd + emergencyPretaxDraw + rothSpendingDraw + lumpyFromBrokerage,
       };
 
       // Portfolio updates
@@ -391,6 +418,8 @@ export function runSimulation(
       pretaxBalance = Math.max(0, pretaxBalance - rmd - emergencyPretaxDraw - conversionAmount);
       // Roth: gains conversion, pays taxes and spending
       rothBalance = Math.max(0, rothBalance + conversionAmount - totalTax - rothSpendingDraw);
+      // T6: brokerage funds the lumpy expense before any growth
+      brokerageBalance = Math.max(0, brokerageBalance - lumpyFromBrokerage);
       inheritedIraBalance = Math.max(0, inheritedIraBalance - inheritedDist);
       hsaBalance = Math.max(0, hsaBalance - fromHsa);
 

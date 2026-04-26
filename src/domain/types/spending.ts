@@ -4,6 +4,17 @@ export interface OneTimeExpense {
   amount: number;
 }
 
+// One-time cash injection (e.g. house sale proceeds at retirement, inheritance).
+// Lands in brokerage at the specified year, before that year's withdrawals/conversions.
+// `taxable: true` means the engine treats the amount as ordinary income for that year
+// (rare — most use cases are post-tax proceeds like a primary-residence sale under §121).
+export interface OneTimeIncome {
+  year: number;
+  label: string;
+  amount: number;        // in today's real dollars
+  taxable?: boolean;     // default false (post-tax proceeds)
+}
+
 export interface SpendingProfile {
   baseAnnualSpending: number;       // in today's dollars
   travelBudgetEarly: number;        // added to base in early retirement
@@ -11,6 +22,7 @@ export interface SpendingProfile {
   travelTaperStartAge: number;      // client age when travel tapers
   charitableGivingAnnual: number;
   oneTimeExpenses: OneTimeExpense[];
+  oneTimeIncomes?: OneTimeIncome[]; // optional cash injections (house sale, inheritance, etc.)
   inflationRate: number;            // default 0.03
 
   // Mortgage — fixed nominal payment (P&I only), ends at mortgagePaidOffAge.
@@ -21,6 +33,14 @@ export interface SpendingProfile {
 
   // HSA healthcare routing — if set, this amount is drawn from HSA first before
   // hitting the spending pool. Do NOT include this cost in baseAnnualSpending.
-  // Covers ACA premiums, Medicare Part B/D/Medigap, etc.
-  annualHealthcareCost?: number;    // e.g. 40_000 for ACA premiums
+  // Covers Medicare Part B/D/Medigap (ACA premiums in the pre-Medicare bridge typically
+  // belong in baseAnnualSpending instead, since they're not HSA-eligible).
+  annualHealthcareCost?: number;    // e.g. 15_000 for Medicare + Medigap
+
+  // Age at which annualHealthcareCost begins. Defaults to 65 (Medicare). For long
+  // pre-Medicare bridges (retire at 55), keeping this at 65 avoids charging the HSA
+  // for healthcare during years when ACA is the actual coverage and is paid from
+  // baseAnnualSpending. Set to retirement age if your healthcareCost truly starts
+  // at retirement (e.g. private health insurance abroad).
+  healthcareStartAge?: number;      // default 65
 }

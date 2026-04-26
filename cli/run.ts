@@ -83,15 +83,23 @@ interface SpendingInput {
   charitable?: number;
   /** One-time / lumpy expenses (weddings, roof, car, etc.) */
   lumpyExpenses?: Array<{ year: number; label: string; amount: number }>;
+  /** One-time cash injections (e.g. house sale proceeds, inheritance). Lands in brokerage at the
+   *  specified year. Default not taxable (post-tax proceeds, e.g. §121 home-sale exclusion). */
+  oneTimeIncomes?: Array<{ year: number; label: string; amount: number; taxable?: boolean }>;
   /** Inflation rate as a percentage, e.g. 3 means 3%. Default: 3 */
   inflationRate?: number;
   /** Fixed-rate mortgage P&I payment (nominal, not inflation-adjusted). Omit if no mortgage. */
   mortgageAnnualPayment?: number;
   /** Client age when mortgage is paid off (last payment year). */
   mortgagePaidOffAge?: number;
-  /** If set, this amount is drawn from HSA each year before hitting the spending pool.
-   *  Covers ACA premiums, Medicare Part B/D, Medigap, etc. */
+  /** If set, this amount is drawn from HSA each year (from healthcareStartAge onward) before
+   *  hitting the spending pool. Typically Medicare Part B/D + Medigap. ACA premiums in the
+   *  pre-Medicare bridge are NOT HSA-eligible — put those in `essential` instead. */
   annualHealthcareCost?: number;
+  /** Client age at which annualHealthcareCost begins. Default: 65 (Medicare). For long
+   *  pre-Medicare bridges, the default avoids draining the HSA for healthcare during years
+   *  when ACA is the actual coverage. */
+  healthcareStartAge?: number;
 }
 
 interface ProfileInput {
@@ -229,6 +237,12 @@ function loadProfile(filePath: string): {
     label: e.label,
     amount: e.amount,
   }));
+  const oneTimeIncomes = (sp.oneTimeIncomes ?? []).map((i) => ({
+    year: i.year,
+    label: i.label,
+    amount: i.amount,
+    taxable: i.taxable,
+  }));
 
   const spending: SpendingProfile = {
     baseAnnualSpending: sp.essential,
@@ -237,6 +251,7 @@ function loadProfile(filePath: string): {
     travelTaperStartAge: sp.lifestyleTaperAge ?? 75,
     charitableGivingAnnual: sp.charitable ?? 0,
     oneTimeExpenses: lumpyExpenses,
+    ...(oneTimeIncomes.length > 0 && { oneTimeIncomes }),
     inflationRate: (sp.inflationRate ?? 3) / 100,
     ...(sp.mortgageAnnualPayment && sp.mortgageAnnualPayment > 0 && {
       mortgageAnnualPayment: sp.mortgageAnnualPayment,
@@ -245,6 +260,7 @@ function loadProfile(filePath: string): {
     ...(sp.annualHealthcareCost && sp.annualHealthcareCost > 0 && {
       annualHealthcareCost: sp.annualHealthcareCost,
     }),
+    ...(sp.healthcareStartAge !== undefined && { healthcareStartAge: sp.healthcareStartAge }),
   };
 
   // ── Guardrails
