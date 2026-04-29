@@ -1,320 +1,27 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useProfileStore } from '@/store/profile.store';
 import { useSimulationStore } from '@/store/simulation.store';
 import { deriveAssetTotals } from '@/domain/types/assets';
-import type { ClientProfile, PersonProfile } from '@/domain/types/profile';
-import type { Account } from '@/domain/types/assets';
-import type { SpendingProfile, OneTimeExpense } from '@/domain/types/spending';
+import type { ClientProfile } from '@/domain/types/profile';
+import type { OneTimeExpense, SpendingProfile } from '@/domain/types/spending';
 import { formatCurrency } from '@/lib/format';
 import { US_STATES, getStateInfo } from '@/domain/constants/states';
 import { useRouter } from 'next/navigation';
 
-// ─── Demo profiles ────────────────────────────────────────────────────────────
-
-interface DemoEntry {
-  key: string;
-  label: string;
-  tag: string;      // short descriptor shown in the dropdown
-  situation: string; // one-sentence summary shown below the dropdown
-  profile: ClientProfile;
-  accounts: Account[];
-  homeEquity: number;
-  spending: SpendingProfile;
-}
-
-const DEMOS: DemoEntry[] = [
-  // ── 1. Mike & Laura — Near-Retirement Couple ──────────────────────────────
-  {
-    key: 'mike-laura',
-    label: 'Mike & Laura',
-    tag: 'Near-retirement couple, ACA cliff strategy',
-    situation: 'Ages 59 & 61, retiring now. Brokerage funds Roth conversion taxes while staying under the ACA subsidy cliff during the pre-Medicare window.',
-    profile: {
-      client: { name: 'Mike', age: 59, birthYear: 1967, lifeExpectancy: 90, fullRetirementAge: 67, fraMonthlyBenefit: 3_200, socialSecurityClaimAge: 68 },
-      spouse:  { name: 'Laura', age: 61, birthYear: 1965, lifeExpectancy: 95, fullRetirementAge: 67, fraMonthlyBenefit: 2_800, socialSecurityClaimAge: 68 },
-      filingStatus: 'married_filing_jointly',
-      stateOfResidence: 'TX', hasStateIncomeTax: false,
-      currentYear: 2026, retirementYearDesired: 2026,
-      cobraMonths: 12, acaHouseholdSize: 2,
-    },
-    accounts: [
-      { id: '1', label: "Mike's IRA",      owner: 'client', type: 'pretax_ira',   currentBalance: 800_000 },
-      { id: '2', label: "Laura's IRA",     owner: 'spouse', type: 'pretax_ira',   currentBalance: 900_000 },
-      { id: '3', label: 'Joint Brokerage', owner: 'joint',  type: 'brokerage',    currentBalance: 250_000, costBasis: 175_000 },
-      { id: '4', label: 'Inherited IRA',   owner: 'client', type: 'inherited_ira', currentBalance: 100_000, isInherited: true, inheritedIraRemainingYears: 8 },
-    ],
-    homeEquity: 600_000,
-    spending: {
-      baseAnnualSpending: 126_000,
-      travelBudgetEarly: 25_000, travelBudgetLate: 12_000, travelTaperStartAge: 75,
-      charitableGivingAnnual: 10_000,
-      oneTimeExpenses: [
-        { year: 2027, label: "Son's wedding", amount: 25_000 },
-        { year: 2030, label: 'Roof replacement', amount: 18_000 },
-      ],
-      inflationRate: 0.03,
-    },
-  },
-
-  // ── 2. Sofia & Marcus — FIRE at 42 ───────────────────────────────────────
-  {
-    key: 'sofia-marcus',
-    label: 'Sofia & Marcus',
-    tag: 'FIRE couple retiring at 42 — 23-year ACA window',
-    situation: 'Both 42, retiring now with young kids on the plan. ACA subsidy management matters for 23 years until Medicare. Mortgage still running.',
-    profile: {
-      client: { name: 'Sofia',  age: 42, birthYear: 1984, lifeExpectancy: 90, fullRetirementAge: 67, fraMonthlyBenefit: 1_800, socialSecurityClaimAge: 67 },
-      spouse:  { name: 'Marcus', age: 40, birthYear: 1986, lifeExpectancy: 88, fullRetirementAge: 67, fraMonthlyBenefit: 1_500, socialSecurityClaimAge: 67 },
-      filingStatus: 'married_filing_jointly',
-      stateOfResidence: 'CO', hasStateIncomeTax: true,
-      currentYear: 2026, retirementYearDesired: 2026,
-      cobraMonths: 0, acaHouseholdSize: 4,
-    },
-    accounts: [
-      { id: '1', label: "Sofia's 401k",   owner: 'client', type: 'pretax_ira', currentBalance: 320_000 },
-      { id: '2', label: "Marcus's 401k",  owner: 'spouse', type: 'pretax_ira', currentBalance: 210_000 },
-      { id: '3', label: "Sofia's Roth",   owner: 'client', type: 'roth_ira',   currentBalance:  55_000 },
-      { id: '4', label: "Marcus's Roth",  owner: 'spouse', type: 'roth_ira',   currentBalance:  30_000 },
-      { id: '5', label: 'Joint Brokerage', owner: 'joint', type: 'brokerage',  currentBalance:  95_000, costBasis: 65_000 },
-    ],
-    homeEquity: 180_000,
-    spending: {
-      baseAnnualSpending: 68_000,
-      travelBudgetEarly: 18_000, travelBudgetLate: 8_000, travelTaperStartAge: 65,
-      charitableGivingAnnual: 3_000,
-      oneTimeExpenses: [
-        { year: 2032, label: 'College tuition (child 1)', amount: 30_000 },
-        { year: 2035, label: 'College tuition (child 2)', amount: 30_000 },
-      ],
-      inflationRate: 0.03,
-      mortgageAnnualPayment: 22_800,
-      mortgagePaidOffAge: 62,
-    },
-  },
-
-  // ── 3. Jennifer — Solo Pre-Tax Heavy ─────────────────────────────────────
-  {
-    key: 'jennifer',
-    label: 'Jennifer',
-    tag: 'Single, retiring at 62 — pre-tax heavy, Roth conversion window',
-    situation: 'Single, 58, retiring in 4 years. $1.1M pre-tax with minimal Roth creates RMD risk. Goal: convert aggressively during the COBRA + ACA window before RMDs hit.',
-    profile: {
-      client: { name: 'Jennifer', age: 58, birthYear: 1968, lifeExpectancy: 92, fullRetirementAge: 67, fraMonthlyBenefit: 2_400, socialSecurityClaimAge: 70 },
-      spouse: null,
-      filingStatus: 'single',
-      stateOfResidence: 'FL', hasStateIncomeTax: false,
-      currentYear: 2026, retirementYearDesired: 2030,
-      cobraMonths: 18, acaHouseholdSize: 1,
-    },
-    accounts: [
-      { id: '1', label: 'Rollover IRA',    owner: 'client', type: 'pretax_ira', currentBalance: 1_100_000 },
-      { id: '2', label: 'Roth IRA',        owner: 'client', type: 'roth_ira',   currentBalance:    65_000 },
-      { id: '3', label: 'Brokerage',       owner: 'client', type: 'brokerage',  currentBalance:   175_000, costBasis: 120_000 },
-    ],
-    homeEquity: 380_000,
-    spending: {
-      baseAnnualSpending: 62_000,
-      travelBudgetEarly: 20_000, travelBudgetLate: 9_000, travelTaperStartAge: 75,
-      charitableGivingAnnual: 5_000,
-      oneTimeExpenses: [],
-      inflationRate: 0.03,
-    },
-  },
-
-  // ── 4. Carlos & Elena — Retiring Abroad ──────────────────────────────────
-  {
-    key: 'carlos-elena',
-    label: 'Carlos & Elena',
-    tag: 'Retiring abroad at 54 — no ACA cliff, free Roth conversions',
-    situation: 'Ages 54 & 51, retiring internationally. No ACA constraints means $242k/yr Roth conversions can run freely for 11 years before Medicare. HSA covers international coverage.',
-    profile: {
-      client: { name: 'Carlos', age: 54, birthYear: 1972, lifeExpectancy: 88, fullRetirementAge: 67, fraMonthlyBenefit: 2_600, socialSecurityClaimAge: 62 },
-      spouse:  { name: 'Elena',  age: 51, birthYear: 1975, lifeExpectancy: 92, fullRetirementAge: 67, fraMonthlyBenefit: 1_200, socialSecurityClaimAge: 62 },
-      filingStatus: 'married_filing_jointly',
-      stateOfResidence: 'IL', hasStateIncomeTax: true,
-      currentYear: 2026, retirementYearDesired: 2026,
-      cobraMonths: 0, acaHouseholdSize: 2,
-      retirementLocation: 'international',
-      targetBracket: '22%' as const,
-    },
-    accounts: [
-      { id: '1', label: "Carlos's IRA",  owner: 'client', type: 'pretax_ira', currentBalance: 1_400_000 },
-      { id: '2', label: "Elena's IRA",   owner: 'spouse', type: 'pretax_ira', currentBalance:   580_000 },
-      { id: '3', label: 'Roth IRA',      owner: 'client', type: 'roth_ira',   currentBalance:   220_000 },
-      { id: '4', label: 'HSA',           owner: 'client', type: 'hsa',        currentBalance:    85_000 },
-    ],
-    homeEquity: 0,
-    spending: {
-      baseAnnualSpending: 52_000,
-      travelBudgetEarly: 22_000, travelBudgetLate: 12_000, travelTaperStartAge: 72,
-      charitableGivingAnnual: 8_000,
-      oneTimeExpenses: [],
-      inflationRate: 0.03,
-      annualHealthcareCost: 14_000,
-    },
-  },
-
-  // ── 5. David — RMD Countdown ─────────────────────────────────────────────
-  {
-    key: 'david',
-    label: 'David',
-    tag: 'Already retired at 71 — RMD bomb, charitable strategy',
-    situation: 'Single, 71, already on Medicare and collecting SS (claimed at 70). $2.1M pre-tax triggers growing RMDs. Goal: Roth conversions + Qualified Charitable Distributions to defuse the tax bomb.',
-    profile: {
-      client: { name: 'David', age: 71, birthYear: 1955, lifeExpectancy: 88, fullRetirementAge: 67, fraMonthlyBenefit: 2_900, socialSecurityClaimAge: 70 },
-      spouse: null,
-      filingStatus: 'single',
-      stateOfResidence: 'AZ', hasStateIncomeTax: true,
-      currentYear: 2026, retirementYearDesired: 2026,
-      cobraMonths: 0, acaHouseholdSize: 1,
-    },
-    accounts: [
-      { id: '1', label: 'Rollover IRA',  owner: 'client', type: 'pretax_ira', currentBalance: 2_100_000 },
-      { id: '2', label: 'Roth IRA',      owner: 'client', type: 'roth_ira',   currentBalance:    35_000 },
-      { id: '3', label: 'Brokerage',     owner: 'client', type: 'brokerage',  currentBalance:    55_000, costBasis: 45_000 },
-    ],
-    homeEquity: 420_000,
-    spending: {
-      baseAnnualSpending: 52_000,
-      travelBudgetEarly: 14_000, travelBudgetLate: 6_000, travelTaperStartAge: 78,
-      charitableGivingAnnual: 22_000,
-      oneTimeExpenses: [],
-      inflationRate: 0.03,
-    },
-  },
-
-  // ── 6. Alex & Morgan — Long-Horizon Accumulation + International ───────────
-  {
-    key: 'alex-morgan',
-    label: 'Alex & Morgan',
-    tag: 'Ages 41 & 38, retiring abroad 2041 — 15-yr accumulation, bracket-filling conversions',
-    situation: 'Ages 41 & 38, retiring internationally in 2041. 15 working years of 401k + backdoor Roth contributions compound to ~$5M before retirement. No ACA cliff means conversions fill the 22% bracket freely from day one. Roth balance grows while pretax depletes gradually.',
-    profile: {
-      client: { name: 'Alex',   age: 41, birthYear: 1985, lifeExpectancy: 90, fullRetirementAge: 67, fraMonthlyBenefit: 2_750, socialSecurityClaimAge: 62 },
-      spouse:  { name: 'Morgan', age: 38, birthYear: 1988, lifeExpectancy: 95, fullRetirementAge: 67, fraMonthlyBenefit: 2_600, socialSecurityClaimAge: 62 },
-      filingStatus: 'married_filing_jointly',
-      stateOfResidence: 'VA', hasStateIncomeTax: true,
-      currentYear: 2026, retirementYearDesired: 2041,
-      cobraMonths: 0, acaHouseholdSize: 4,
-      retirementLocation: 'international',
-      targetBracket: '22%' as const,
-      annualContributions: { pretax: 46_000, roth: 14_000, brokerage: 0, hsa: 8_300 },
-    },
-    accounts: [
-      { id: '1', label: "Alex's 401k",    owner: 'client', type: 'pretax_ira', currentBalance: 485_000 },
-      { id: '2', label: "Morgan's 401k",  owner: 'spouse', type: 'pretax_ira', currentBalance: 255_000 },
-      { id: '3', label: "Alex's Roth",    owner: 'client', type: 'roth_ira',   currentBalance:  88_000 },
-      { id: '4', label: "Morgan's Roth",  owner: 'spouse', type: 'roth_ira',   currentBalance:  51_000 },
-      { id: '5', label: 'Taxable Brokerage', owner: 'joint', type: 'brokerage', currentBalance: 5_000, costBasis: 5_000 },
-      { id: '6', label: 'HSA',            owner: 'client', type: 'hsa',        currentBalance:  28_000 },
-    ],
-    homeEquity: 115_000,
-    spending: {
-      baseAnnualSpending: 118_000,
-      travelBudgetEarly: 8_000, travelBudgetLate: 4_000, travelTaperStartAge: 75,
-      charitableGivingAnnual: 0,
-      oneTimeExpenses: [],
-      inflationRate: 0.03,
-      mortgageAnnualPayment: 46_200,
-      mortgagePaidOffAge: 68,
-      annualHealthcareCost: 15_000,
-    },
-  },
-];
-
-// ─── Form state ───────────────────────────────────────────────────────────────
-
-interface FormState {
-  client: PersonProfile;
-  hasSpouse: boolean;
-  spouse: PersonProfile;
-  filingStatus: 'married_filing_jointly' | 'single';
-  stateAbbreviation: string;
-  hasStateIncomeTax: boolean;
-  currentYear: number;
-  retirementYearDesired: number;
-  retireOutsideUS: boolean;
-  healthBridge: 'cobra' | 'aca' | 'spouse_employer';  // US only
-  dependentsOnPlan: number;          // children/other dependents (not client or spouse) on health plan
-  growthScenario: 'pessimistic' | 'conservative' | 'moderate' | 'optimistic' | 'historical';
-  accounts: Account[];
-  homeEquity: number;
-  essentialAnnualSpending: number;   // maps to baseAnnualSpending (exclude healthcare if using HSA)
-  annualHealthcareCost: number;      // 0 = included in essential; >0 = drawn from HSA first
-  lifestyleSpendingActive: number;   // maps to travelBudgetEarly
-  lifestyleSpendingSlower: number;   // maps to travelBudgetLate
-  lifestyleTaperAge: number;         // maps to travelTaperStartAge
-  charitableGivingAnnual: number;
-  oneTimeExpenses: OneTimeExpense[];
-  inflationRate: number;
-  mortgageAnnualPayment: number;   // 0 = no mortgage
-  mortgagePaidOffAge: number;      // client age at payoff
-  // Expert/advisor settings
-  targetBracket?: '10%' | '12%' | '22%' | '24%' | '32%' | '35%';
-  annualContributions: { pretax: number; roth: number; brokerage: number; hsa: number };
-}
-
-const BLANK_PERSON: PersonProfile = {
-  name: '',
-  age: 0,
-  birthYear: 0,
-  lifeExpectancy: 90,
-  fullRetirementAge: 67,
-  fraMonthlyBenefit: 0,
-  socialSecurityClaimAge: 67,
-};
-
-function buildFormState(
-  profile: ClientProfile | null,
-  accounts: Account[],
-  homeEquity: number,
-  spending: SpendingProfile | null,
-): FormState {
-  return {
-    client: profile?.client ?? { ...BLANK_PERSON },
-    hasSpouse: profile?.spouse != null,
-    spouse: profile?.spouse ?? { ...BLANK_PERSON },
-    filingStatus: profile?.filingStatus ?? 'married_filing_jointly',
-    stateAbbreviation: profile?.stateOfResidence ?? '',
-    hasStateIncomeTax: profile?.hasStateIncomeTax ?? true,
-    currentYear: profile?.currentYear ?? new Date().getFullYear(),
-    retirementYearDesired: profile?.retirementYearDesired ?? new Date().getFullYear() + 5,
-    retireOutsideUS: profile?.retirementLocation === 'international',
-    healthBridge: (profile?.cobraMonths ?? 0) > 0 ? 'cobra' : 'aca',
-    dependentsOnPlan: Math.max(0, (profile?.acaHouseholdSize ?? 2) - 1 - (profile?.spouse ? 1 : 0)),
-    growthScenario: (() => {
-      const r = profile?.annualGrowthRate ?? 0.08;
-      if (r <= 0.065) return 'pessimistic';
-      if (r <= 0.075) return 'conservative';
-      if (r <= 0.085) return 'moderate';
-      if (r <= 0.095) return 'optimistic';
-      return 'historical';
-    })(),
-    accounts: accounts.length > 0 ? accounts : [{ id: '1', label: '', owner: 'client', type: 'pretax_ira', currentBalance: 0 }],
-    homeEquity,
-    essentialAnnualSpending: spending?.baseAnnualSpending ?? 0,
-    annualHealthcareCost: spending?.annualHealthcareCost ?? 0,
-    lifestyleSpendingActive: spending?.travelBudgetEarly ?? 0,
-    lifestyleSpendingSlower: spending?.travelBudgetLate ?? 0,
-    lifestyleTaperAge: spending?.travelTaperStartAge ?? 75,
-    charitableGivingAnnual: spending?.charitableGivingAnnual ?? 0,
-    oneTimeExpenses: spending?.oneTimeExpenses ?? [],
-    inflationRate: spending?.inflationRate ?? 0.03,
-    mortgageAnnualPayment: spending?.mortgageAnnualPayment ?? 0,
-    mortgagePaidOffAge: spending?.mortgagePaidOffAge ?? 69,
-    targetBracket: profile?.targetBracket,
-    annualContributions: {
-      pretax:    profile?.annualContributions?.pretax    ?? 0,
-      roth:      profile?.annualContributions?.roth      ?? 0,
-      brokerage: profile?.annualContributions?.brokerage ?? 0,
-      hsa:       profile?.annualContributions?.hsa       ?? 0,
-    },
-  };
-}
-
-// ─── Main component ───────────────────────────────────────────────────────────
+import { DEMOS } from './_demos';
+import { type FormState, buildFormState } from './_form-state';
+import {
+  AccountRow,
+  CurrencyInput,
+  Field,
+  NumericInput,
+  PersonFields,
+  Section,
+  inputClass,
+  selectClass,
+} from './_components';
 
 export default function ProfilePage() {
   const { setProfile, setAssets, setSpending, profile, assets, spending } = useProfileStore();
@@ -335,56 +42,51 @@ export default function ProfilePage() {
     setForm((f) => ({ ...f, [key]: value }));
   }
 
-  function updateClient(patch: Partial<PersonProfile>) {
+  const updateClient = (patch: Partial<FormState['client']>) =>
     setForm((f) => ({ ...f, client: { ...f.client, ...patch } }));
-  }
 
-  function updateSpouse(patch: Partial<PersonProfile>) {
+  const updateSpouse = (patch: Partial<FormState['spouse']>) =>
     setForm((f) => ({ ...f, spouse: { ...f.spouse, ...patch } }));
-  }
 
-  function updateAccount(id: string, patch: Partial<Account>) {
+  const updateAccount = (id: string, patch: Partial<FormState['accounts'][number]>) =>
     setForm((f) => ({
       ...f,
       accounts: f.accounts.map((a) => (a.id === id ? { ...a, ...patch } : a)),
     }));
-  }
 
-  function addAccount() {
-    const id = String(Date.now());
+  const addAccount = () =>
     setForm((f) => ({
       ...f,
-      accounts: [...f.accounts, { id, label: '', owner: 'client', type: 'pretax_ira', currentBalance: 0 }],
+      accounts: [
+        ...f.accounts,
+        { id: String(Date.now()), label: '', owner: 'client', type: 'pretax_ira', currentBalance: 0 },
+      ],
     }));
-  }
 
-  function removeAccount(id: string) {
+  const removeAccount = (id: string) =>
     setForm((f) => ({ ...f, accounts: f.accounts.filter((a) => a.id !== id) }));
-  }
 
-  function addLumpyExpense() {
+  const addLumpyExpense = () => {
     const newExpense: OneTimeExpense = {
       year: form.retirementYearDesired + 2,
       label: '',
       amount: 0,
     };
     setForm((f) => ({ ...f, oneTimeExpenses: [...f.oneTimeExpenses, newExpense] }));
-  }
+  };
 
-  function updateLumpyExpense(index: number, patch: Partial<OneTimeExpense>) {
+  const updateLumpyExpense = (index: number, patch: Partial<OneTimeExpense>) =>
     setForm((f) => {
       const updated = [...f.oneTimeExpenses];
       updated[index] = { ...updated[index], ...patch };
       return { ...f, oneTimeExpenses: updated };
     });
-  }
 
-  function removeLumpyExpense(index: number) {
+  const removeLumpyExpense = (index: number) =>
     setForm((f) => ({
       ...f,
       oneTimeExpenses: f.oneTimeExpenses.filter((_, i) => i !== index),
     }));
-  }
 
   function handleStateChange(abbreviation: string) {
     const info = getStateInfo(abbreviation);
@@ -405,10 +107,8 @@ export default function ProfilePage() {
   }
 
   function handleSubmit() {
-    // Derive expert settings from simple answers
     const retirementLocation: 'us' | 'international' = form.retireOutsideUS ? 'international' : 'us';
     const cobraMonths = form.retireOutsideUS ? 0 : form.healthBridge === 'cobra' ? 18 : 0;
-    // ACA household = client + spouse (if present) + dependents
     const acaHouseholdSize = 1 + (form.hasSpouse ? 1 : 0) + form.dependentsOnPlan;
     const annualGrowthRate =
       form.growthScenario === 'pessimistic'  ? 0.06
@@ -416,6 +116,12 @@ export default function ProfilePage() {
       : form.growthScenario === 'optimistic'   ? 0.09
       : form.growthScenario === 'historical'   ? 0.10
       : 0.08; // moderate (default)
+
+    const totalContribs =
+      form.annualContributions.pretax +
+      form.annualContributions.roth +
+      form.annualContributions.brokerage +
+      form.annualContributions.hsa;
 
     const clientProfile: ClientProfile = {
       client: form.client,
@@ -430,10 +136,7 @@ export default function ProfilePage() {
       annualGrowthRate,
       retirementLocation,
       targetBracket: form.targetBracket,
-      annualContributions:
-        (form.annualContributions.pretax + form.annualContributions.roth + form.annualContributions.brokerage + form.annualContributions.hsa) > 0
-          ? form.annualContributions
-          : undefined,
+      annualContributions: totalContribs > 0 ? form.annualContributions : undefined,
     };
 
     const spendingProfile: SpendingProfile = {
@@ -462,9 +165,25 @@ export default function ProfilePage() {
   }
 
   const totalLiquid = form.accounts.reduce((s, a) => s + (a.currentBalance || 0), 0);
-  const totalEarlySpend = form.essentialAnnualSpending + form.annualHealthcareCost + form.lifestyleSpendingActive + form.charitableGivingAnnual + form.mortgageAnnualPayment;
-  const totalLaterSpend = form.essentialAnnualSpending + form.annualHealthcareCost + form.lifestyleSpendingSlower + form.charitableGivingAnnual;
+  const totalEarlySpend =
+    form.essentialAnnualSpending +
+    form.annualHealthcareCost +
+    form.lifestyleSpendingActive +
+    form.charitableGivingAnnual +
+    form.mortgageAnnualPayment;
+  const totalLaterSpend =
+    form.essentialAnnualSpending +
+    form.annualHealthcareCost +
+    form.lifestyleSpendingSlower +
+    form.charitableGivingAnnual;
   const selectedStateInfo = getStateInfo(form.stateAbbreviation);
+  const totalContribs =
+    form.annualContributions.pretax +
+    form.annualContributions.roth +
+    form.annualContributions.brokerage +
+    form.annualContributions.hsa;
+  const workingYears = form.retirementYearDesired - form.currentYear;
+  const selectedDemoEntry = DEMOS.find((d) => d.key === selectedDemo);
 
   return (
     <div className="max-w-3xl">
@@ -484,14 +203,11 @@ export default function ProfilePage() {
           </select>
         </div>
       </div>
-      {selectedDemo && (() => {
-        const demo = DEMOS.find((d) => d.key === selectedDemo);
-        return demo ? (
-          <p className="text-xs text-gray-500 mb-5 leading-relaxed border-l-2 border-yellow-800 pl-3">
-            {demo.situation}
-          </p>
-        ) : null;
-      })()}
+      {selectedDemoEntry && (
+        <p className="text-xs text-gray-500 mb-5 leading-relaxed border-l-2 border-yellow-800 pl-3">
+          {selectedDemoEntry.situation}
+        </p>
+      )}
 
       <div className="space-y-6">
 
@@ -581,7 +297,6 @@ export default function ProfilePage() {
         <Section title="Coverage &amp; Healthcare Bridge">
           <div className="px-4 py-4 space-y-5">
 
-            {/* Where will you retire */}
             <div>
               <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-2">Where will you retire?</p>
               <div className="flex gap-3">
@@ -615,7 +330,6 @@ export default function ProfilePage() {
               )}
             </div>
 
-            {/* US: how will you bridge to Medicare */}
             {!form.retireOutsideUS && (
               <div>
                 <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-2">How will you get health coverage before Medicare?</p>
@@ -650,7 +364,6 @@ export default function ProfilePage() {
               </div>
             )}
 
-            {/* US: dependents on plan */}
             {!form.retireOutsideUS && form.healthBridge !== 'spouse_employer' && (
               <div>
                 <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-1.5">
@@ -729,7 +442,6 @@ export default function ProfilePage() {
         <Section title="Annual Spending">
           <div className="px-4 py-4 space-y-5">
 
-            {/* Essential */}
             <div>
               <Field label="Essential Expenses (annual)">
                 <CurrencyInput
@@ -738,14 +450,13 @@ export default function ProfilePage() {
                 />
               </Field>
               <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
-                Fixed costs that don't change with your activity level: property taxes, homeowners/auto insurance, utilities, groceries, base transportation, Medicare premiums, regular prescriptions.
+                Fixed costs that don&apos;t change with your activity level: property taxes, homeowners/auto insurance, utilities, groceries, base transportation, Medicare premiums, regular prescriptions.
                 {form.annualHealthcareCost > 0 && (
                   <span className="text-yellow-600"> Do not include healthcare costs here — they are entered separately below and drawn from HSA first.</span>
                 )}
               </p>
             </div>
 
-            {/* Healthcare / HSA */}
             <div className="border-t border-gray-700 pt-4">
               <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-3">Healthcare Cost (HSA Routing — optional)</p>
               <Field label="Annual Healthcare Cost">
@@ -760,7 +471,6 @@ export default function ProfilePage() {
               </p>
             </div>
 
-            {/* Lifestyle */}
             <div>
               <p className="text-xs text-gray-500 mb-2 font-medium uppercase tracking-wide">Lifestyle Spending</p>
               <div className="grid grid-cols-2 gap-x-6 gap-y-3">
@@ -776,7 +486,7 @@ export default function ProfilePage() {
                     onChange={(v) => set('lifestyleSpendingSlower', v)}
                   />
                 </Field>
-                <Field label={`Spending steps down at age (yours)`}>
+                <Field label="Spending steps down at age (yours)">
                   <NumericInput
                     value={form.lifestyleTaperAge}
                     onChange={(v) => set('lifestyleTaperAge', v)}
@@ -791,7 +501,6 @@ export default function ProfilePage() {
               </p>
             </div>
 
-            {/* Charitable */}
             <Field label="Charitable Giving (annual)">
               <CurrencyInput
                 value={form.charitableGivingAnnual}
@@ -799,7 +508,6 @@ export default function ProfilePage() {
               />
             </Field>
 
-            {/* Mortgage */}
             <div className="border-t border-gray-700 pt-4">
               <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-3">Mortgage at Retirement (optional)</p>
               <div className="grid grid-cols-2 gap-4">
@@ -825,7 +533,6 @@ export default function ProfilePage() {
               </p>
             </div>
 
-            {/* Totals */}
             <div className="bg-gray-800 rounded-lg p-3 text-sm space-y-1">
               <div className="flex justify-between">
                 <span className="text-gray-400">Early retirement total (incl. mortgage)</span>
@@ -837,7 +544,6 @@ export default function ProfilePage() {
               </div>
             </div>
 
-            {/* Lumpy expenses */}
             <div>
               <div className="flex items-center justify-between mb-2">
                 <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">Lumpy / One-Time Expenses</p>
@@ -903,7 +609,6 @@ export default function ProfilePage() {
               </details>
             </div>
 
-            {/* Inflation */}
             <Field label="Assumed Inflation Rate">
               <div className="relative w-32">
                 <NumericInput
@@ -958,57 +663,39 @@ export default function ProfilePage() {
               </p>
             </div>
 
-            {form.retirementYearDesired > form.currentYear && (
+            {workingYears > 0 && (
               <div>
                 <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-1">Annual Contributions (Working Years)</p>
                 <p className="text-xs text-gray-500 mb-3 leading-relaxed">
-                  How much you add each year until retirement. Each dollar is compounded at the growth rate above across {form.retirementYearDesired - form.currentYear} working {form.retirementYearDesired - form.currentYear === 1 ? 'year' : 'years'} — leaving these at $0 significantly understates your retirement portfolio.
+                  How much you add each year until retirement. Each dollar is compounded at the growth rate above across {workingYears} working {workingYears === 1 ? 'year' : 'years'} — leaving these at $0 significantly understates your retirement portfolio.
                 </p>
                 <div className="grid grid-cols-2 gap-x-6 gap-y-3">
-                  <Field label="Pre-tax 401k / IRA (total household)">
-                    <div className="relative">
-                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 text-sm pointer-events-none">$</span>
-                      <NumericInput
-                        value={form.annualContributions.pretax}
-                        onChange={(v) => setForm((f) => ({ ...f, annualContributions: { ...f.annualContributions, pretax: v } }))}
-                        className={inputClass + ' pl-6'}
-                      />
-                    </div>
-                  </Field>
-                  <Field label="Roth IRA — incl. backdoor (total household)">
-                    <div className="relative">
-                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 text-sm pointer-events-none">$</span>
-                      <NumericInput
-                        value={form.annualContributions.roth}
-                        onChange={(v) => setForm((f) => ({ ...f, annualContributions: { ...f.annualContributions, roth: v } }))}
-                        className={inputClass + ' pl-6'}
-                      />
-                    </div>
-                  </Field>
-                  <Field label="Taxable brokerage savings">
-                    <div className="relative">
-                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 text-sm pointer-events-none">$</span>
-                      <NumericInput
-                        value={form.annualContributions.brokerage}
-                        onChange={(v) => setForm((f) => ({ ...f, annualContributions: { ...f.annualContributions, brokerage: v } }))}
-                        className={inputClass + ' pl-6'}
-                      />
-                    </div>
-                  </Field>
-                  <Field label="HSA contributions (total household)">
-                    <div className="relative">
-                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 text-sm pointer-events-none">$</span>
-                      <NumericInput
-                        value={form.annualContributions.hsa}
-                        onChange={(v) => setForm((f) => ({ ...f, annualContributions: { ...f.annualContributions, hsa: v } }))}
-                        className={inputClass + ' pl-6'}
-                      />
-                    </div>
-                  </Field>
+                  {([
+                    { key: 'pretax',    label: 'Pre-tax 401k / IRA (total household)' },
+                    { key: 'roth',      label: 'Roth IRA — incl. backdoor (total household)' },
+                    { key: 'brokerage', label: 'Taxable brokerage savings' },
+                    { key: 'hsa',       label: 'HSA contributions (total household)' },
+                  ] as const).map(({ key, label }) => (
+                    <Field key={key} label={label}>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 text-sm pointer-events-none">$</span>
+                        <NumericInput
+                          value={form.annualContributions[key]}
+                          onChange={(v) =>
+                            setForm((f) => ({
+                              ...f,
+                              annualContributions: { ...f.annualContributions, [key]: v },
+                            }))
+                          }
+                          className={inputClass + ' pl-6'}
+                        />
+                      </div>
+                    </Field>
+                  ))}
                 </div>
-                {(form.annualContributions.pretax + form.annualContributions.roth + form.annualContributions.brokerage + form.annualContributions.hsa) > 0 && (
+                {totalContribs > 0 && (
                   <p className="text-xs text-gray-500 mt-2">
-                    ${((form.annualContributions.pretax + form.annualContributions.roth + form.annualContributions.brokerage + form.annualContributions.hsa) / 1_000).toFixed(1)}k/yr saved over {form.retirementYearDesired - form.currentYear} years
+                    ${(totalContribs / 1_000).toFixed(1)}k/yr saved over {workingYears} years
                   </p>
                 )}
               </div>
@@ -1016,7 +703,6 @@ export default function ProfilePage() {
           </div>
         </details>
 
-        {/* ── Submit ── */}
         <button
           onClick={handleSubmit}
           className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-semibold transition-colors"
@@ -1027,324 +713,3 @@ export default function ProfilePage() {
     </div>
   );
 }
-
-// ─── PersonFields ─────────────────────────────────────────────────────────────
-
-function PersonFields({
-  person,
-  onChange,
-}: {
-  person: PersonProfile;
-  onChange: (patch: Partial<PersonProfile>) => void;
-}) {
-  return (
-    <div className="px-4 py-4 space-y-4">
-      <div className="grid grid-cols-2 gap-x-6 gap-y-4">
-        <Field label="Name">
-          <input
-            type="text"
-            value={person.name}
-            onChange={(e) => onChange({ name: e.target.value })}
-            placeholder="First name"
-            className={inputClass}
-          />
-        </Field>
-
-        <Field label="Current Age">
-          <NumericInput
-            value={person.age}
-            onChange={(v) => onChange({ age: v, birthYear: new Date().getFullYear() - v })}
-            min={25}
-            max={90}
-            className={inputClass}
-          />
-        </Field>
-
-        <Field label="Life Expectancy">
-          <NumericInput
-            value={person.lifeExpectancy}
-            onChange={(v) => onChange({ lifeExpectancy: v })}
-            min={70}
-            max={110}
-            className={inputClass}
-          />
-          <p className="text-xs text-gray-500 mt-1">
-            Use 90 for men, 95 for women as a conservative default.{' '}
-            <span className="text-gray-600">SSA.gov has a calculator if you want to be precise.</span>
-          </p>
-        </Field>
-
-        <Field label="Full Retirement Age (for SS)">
-          <NumericInput
-            value={person.fullRetirementAge}
-            onChange={(v) => onChange({ fullRetirementAge: v })}
-            min={62}
-            max={70}
-            className={inputClass}
-          />
-          <p className="text-xs text-gray-500 mt-1">Born 1960+: FRA is 67.</p>
-        </Field>
-
-        <Field label="SS Benefit at FRA ($/month)">
-          <CurrencyInput
-            value={person.fraMonthlyBenefit}
-            onChange={(v) => onChange({ fraMonthlyBenefit: v })}
-          />
-          <p className="text-xs text-gray-500 mt-1">
-            Your estimated monthly benefit if you claim exactly at your Full Retirement Age.{' '}
-            <span className="text-gray-600">Find this on your Social Security statement at ssa.gov/myaccount.</span>
-          </p>
-        </Field>
-
-        <Field label="Planned SS Claim Age">
-          <NumericInput
-            value={person.socialSecurityClaimAge}
-            onChange={(v) => onChange({ socialSecurityClaimAge: v })}
-            min={62}
-            max={70}
-            className={inputClass}
-          />
-          <p className="text-xs text-gray-500 mt-1">62–70. Later = higher monthly benefit.</p>
-        </Field>
-      </div>
-    </div>
-  );
-}
-
-// ─── AccountRow ───────────────────────────────────────────────────────────────
-
-function AccountRow({
-  account,
-  hasSpouse,
-  onChange,
-  onRemove,
-}: {
-  account: Account;
-  hasSpouse: boolean;
-  onChange: (patch: Partial<Account>) => void;
-  onRemove: () => void;
-}) {
-  const showCostBasis = account.type === 'brokerage';
-
-  return (
-    <div className="space-y-1.5">
-      <div className="grid grid-cols-[1fr_90px_120px_130px_130px_28px] gap-2 items-center">
-        <input
-          type="text"
-          value={account.label}
-          onChange={(e) => onChange({ label: e.target.value })}
-          placeholder="e.g. My Rollover IRA"
-          className={inputClass + ' text-sm'}
-        />
-
-        <select
-          value={account.owner}
-          onChange={(e) => onChange({ owner: e.target.value as Account['owner'] })}
-          className={selectClass + ' text-sm'}
-        >
-          <option value="client">Me</option>
-          {hasSpouse && <option value="spouse">Spouse</option>}
-          <option value="joint">Joint</option>
-        </select>
-
-        <select
-          value={account.type}
-          onChange={(e) =>
-            onChange({
-              type: e.target.value as Account['type'],
-              isInherited: e.target.value === 'inherited_ira',
-            })
-          }
-          className={selectClass + ' text-sm'}
-        >
-          <option value="pretax_ira">Pre-tax IRA / 401k</option>
-          <option value="roth_ira">Roth IRA</option>
-          <option value="brokerage">Brokerage</option>
-          <option value="inherited_ira">Inherited IRA</option>
-          <option value="hsa">HSA</option>
-        </select>
-
-        <CurrencyInput value={account.currentBalance} onChange={(v) => onChange({ currentBalance: v })} />
-
-        {showCostBasis ? (
-          <CurrencyInput
-            value={account.costBasis ?? 0}
-            onChange={(v) => onChange({ costBasis: v })}
-            placeholder="Cost basis"
-          />
-        ) : (
-          <div />
-        )}
-
-        <button
-          type="button"
-          onClick={onRemove}
-          className="text-gray-600 hover:text-red-400 transition-colors text-xl leading-none"
-        >
-          ×
-        </button>
-      </div>
-
-      {account.type === 'inherited_ira' && (
-        <div className="pl-1 flex items-center gap-2 text-xs text-gray-500">
-          <span>Years remaining in 10-year distribution rule:</span>
-          <NumericInput
-            value={account.inheritedIraRemainingYears ?? 10}
-            onChange={(v) => onChange({ inheritedIraRemainingYears: v })}
-            min={1}
-            max={10}
-            className="w-16 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-gray-200 text-xs"
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Primitives ───────────────────────────────────────────────────────────────
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-lg border border-gray-700 bg-gray-900 overflow-hidden">
-      <div className="px-4 py-3 border-b border-gray-700 bg-gray-800">
-        <h2 className="font-semibold text-white text-sm">{title}</h2>
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-xs text-gray-500">{label}</label>
-      {children}
-    </div>
-  );
-}
-
-// Numeric input that stores raw string internally — avoids leading-zero and
-// cursor-position problems with controlled <input type="number">.
-function NumericInput({
-  value,
-  onChange,
-  min,
-  max,
-  className = '',
-  placeholder = '',
-}: {
-  value: number;
-  onChange: (v: number) => void;
-  min?: number;
-  max?: number;
-  className?: string;
-  placeholder?: string;
-}) {
-  const [raw, setRaw] = useState(() => (value === 0 ? '' : String(value)));
-  const prevValue = useRef(value);
-
-  // Sync when parent value changes externally (e.g. Load Demo)
-  useEffect(() => {
-    if (prevValue.current !== value) {
-      prevValue.current = value;
-      setRaw(value === 0 ? '' : String(value));
-    }
-  }, [value]);
-
-  return (
-    <input
-      type="text"
-      inputMode="numeric"
-      value={raw}
-      placeholder={placeholder}
-      onChange={(e) => {
-        const str = e.target.value.replace(/[^0-9.]/g, '');
-        setRaw(str);
-        const num = parseFloat(str);
-        if (!isNaN(num)) {
-          prevValue.current = num;
-          onChange(num);
-        }
-      }}
-      onBlur={() => {
-        const num = parseFloat(raw);
-        if (isNaN(num)) {
-          setRaw('');
-          onChange(0);
-        } else {
-          const clamped =
-            min !== undefined || max !== undefined
-              ? Math.max(min ?? num, Math.min(max ?? num, num))
-              : num;
-          prevValue.current = clamped;
-          setRaw(String(clamped));
-          onChange(clamped);
-        }
-      }}
-      className={className}
-    />
-  );
-}
-
-function CurrencyInput({
-  value,
-  onChange,
-  placeholder = '0',
-}: {
-  value: number;
-  onChange: (v: number) => void;
-  placeholder?: string;
-}) {
-  const [raw, setRaw] = useState(() => (value === 0 ? '' : String(value)));
-  const prevValue = useRef(value);
-
-  useEffect(() => {
-    if (prevValue.current !== value) {
-      prevValue.current = value;
-      setRaw(value === 0 ? '' : String(value));
-    }
-  }, [value]);
-
-  return (
-    <div className="relative">
-      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 text-sm pointer-events-none select-none">
-        $
-      </span>
-      <input
-        type="text"
-        inputMode="numeric"
-        value={raw}
-        placeholder={placeholder}
-        onChange={(e) => {
-          const str = e.target.value.replace(/[^0-9.]/g, '');
-          setRaw(str);
-          const num = parseFloat(str);
-          if (!isNaN(num)) {
-            prevValue.current = num;
-            onChange(num);
-          } else if (str === '') {
-            onChange(0);
-          }
-        }}
-        onBlur={() => {
-          const num = parseFloat(raw);
-          if (isNaN(num)) {
-            setRaw('');
-            onChange(0);
-          } else {
-            prevValue.current = num;
-            setRaw(String(num));
-            onChange(num);
-          }
-        }}
-        className={inputClass + ' pl-6'}
-      />
-    </div>
-  );
-}
-
-const inputClass =
-  'w-full h-9 bg-gray-800 border border-gray-700 rounded px-2.5 text-gray-200 text-sm focus:outline-none focus:border-blue-500 transition-colors';
-
-const selectClass =
-  'w-full h-9 bg-gray-800 border border-gray-700 rounded px-2 text-gray-200 text-sm focus:outline-none focus:border-blue-500 transition-colors';
