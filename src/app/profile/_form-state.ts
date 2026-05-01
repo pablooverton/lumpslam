@@ -68,11 +68,12 @@ export function buildFormState(
     selfInsuranceAnnualBudget: spending?.selfInsuranceAnnualBudget ?? 0,
     dependentsOnPlan: Math.max(0, (profile?.acaHouseholdSize ?? 2) - 1 - (profile?.spouse ? 1 : 0)),
     growthScenario: (() => {
-      const r = profile?.annualGrowthRate ?? 0.08;
-      if (r <= 0.065) return 'pessimistic';
-      if (r <= 0.075) return 'conservative';
-      if (r <= 0.085) return 'moderate';
-      if (r <= 0.095) return 'optimistic';
+      // Map a stored REAL growth rate back to the closest preset.
+      const r = profile?.annualGrowthRate ?? 0.05;
+      if (r <= 0.035) return 'pessimistic';
+      if (r <= 0.045) return 'conservative';
+      if (r <= 0.055) return 'moderate';
+      if (r <= 0.065) return 'optimistic';
       return 'historical';
     })(),
     accounts: accounts.length > 0 ? accounts : [{ id: '1', label: '', owner: 'client', type: 'pretax_ira', currentBalance: 0 }],

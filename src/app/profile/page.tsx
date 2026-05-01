@@ -114,11 +114,11 @@ export default function ProfilePage() {
       : form.healthBridge === 'cobra' ? 18 : 0;
     const acaHouseholdSize = 1 + (form.hasSpouse ? 1 : 0) + form.dependentsOnPlan;
     const annualGrowthRate =
-      form.growthScenario === 'pessimistic'  ? 0.06
-      : form.growthScenario === 'conservative' ? 0.07
-      : form.growthScenario === 'optimistic'   ? 0.09
-      : form.growthScenario === 'historical'   ? 0.10
-      : 0.08; // moderate (default)
+      form.growthScenario === 'pessimistic'  ? 0.03
+      : form.growthScenario === 'conservative' ? 0.04
+      : form.growthScenario === 'optimistic'   ? 0.06
+      : form.growthScenario === 'historical'   ? 0.07
+      : 0.05; // moderate (default — 60/40 real)
 
     const totalContribs =
       form.annualContributions.pretax +
@@ -192,16 +192,14 @@ export default function ProfilePage() {
   const workingYears = form.retirementYearDesired - form.currentYear;
   const selectedDemoEntry = DEMOS.find((d) => d.key === selectedDemo);
 
-  // Resolved nominal growth rate from the scenario picker (mirrors the mapping in handleSubmit).
-  const nominalGrowthRate =
-    form.growthScenario === 'pessimistic'  ? 0.06
-    : form.growthScenario === 'conservative' ? 0.07
-    : form.growthScenario === 'optimistic'   ? 0.09
-    : form.growthScenario === 'historical'   ? 0.10
-    : 0.08;
-  const realReturn = nominalGrowthRate - form.inflationRate;
-  const realReturnPct = (realReturn * 100).toFixed(1);
-  const realReturnIsNegative = realReturn <= 0;
+  // Resolved real growth rate from the scenario picker (mirrors the mapping in handleSubmit).
+  const realGrowthRate =
+    form.growthScenario === 'pessimistic'  ? 0.03
+    : form.growthScenario === 'conservative' ? 0.04
+    : form.growthScenario === 'optimistic'   ? 0.06
+    : form.growthScenario === 'historical'   ? 0.07
+    : 0.05;
+  const realReturnPct = (realGrowthRate * 100).toFixed(1);
 
   return (
     <div className="max-w-3xl">
@@ -672,12 +670,12 @@ export default function ProfilePage() {
               <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-2">Market Scenario</p>
               <div className="flex gap-2">
                 {([
-                  { value: 'pessimistic',  label: 'Pessimistic',  nominal: '6%',  real: '~3% real', context: 'Bond-heavy / stress test' },
-                  { value: 'conservative', label: 'Conservative', nominal: '7%',  real: '~4% real', context: '40/60 blended' },
-                  { value: 'moderate',     label: 'Moderate',     nominal: '8%',  real: '~5% real', context: '60/40 Boglehead baseline' },
-                  { value: 'optimistic',   label: 'Optimistic',   nominal: '9%',  real: '~6% real', context: '70/30 equity tilt' },
-                  { value: 'historical',   label: 'Historical',   nominal: '10%', real: '~7% real', context: 'US equity long-run avg' },
-                ] as const).map(({ value, label, nominal, real, context }) => (
+                  { value: 'pessimistic',  label: 'Pessimistic',  real: '3%', context: 'Bond-heavy / stress test' },
+                  { value: 'conservative', label: 'Conservative', real: '4%', context: '40/60 blended' },
+                  { value: 'moderate',     label: 'Moderate',     real: '5%', context: '60/40 Boglehead baseline' },
+                  { value: 'optimistic',   label: 'Optimistic',   real: '6%', context: '70/30 equity tilt' },
+                  { value: 'historical',   label: 'Historical',   real: '7%', context: 'US equity long-run avg' },
+                ] as const).map(({ value, label, real, context }) => (
                   <button
                     key={value}
                     type="button"
@@ -689,34 +687,23 @@ export default function ProfilePage() {
                         : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200'
                     }`}
                   >
-                    <div className="font-semibold">{nominal}</div>
+                    <div className="font-semibold">{real}</div>
                     <div className="opacity-70 mt-0.5">{label}</div>
-                    <div className="opacity-50 mt-0.5 text-[10px]">{real}</div>
+                    <div className="opacity-50 mt-0.5 text-[10px]">real</div>
                   </button>
                 ))}
               </div>
               <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
-                Nominal annual return (assuming ~3% inflation). Moderate (8%) ≈ 5% real — consistent with a 60/40 global portfolio and Boglehead planning consensus. Historical US equities ~10% nominal / ~7% real (1926–2023).
+                Real annual return (above inflation). Moderate (5% real) ≈ 8% nominal at 3% inflation — the Boglehead 60/40 baseline. Historical US equities ≈ 7% real (1926–2023). The engine simulates entirely in today&rsquo;s dollars; pick the real return your allocation will earn.
               </p>
-              <div
-                className={`mt-3 px-3 py-2 rounded text-xs leading-relaxed border ${
-                  realReturnIsNegative
-                    ? 'border-amber-700 bg-amber-950 text-amber-200'
-                    : 'border-gray-700 bg-gray-800 text-gray-300'
-                }`}
-              >
+              <div className="mt-3 px-3 py-2 rounded text-xs leading-relaxed border border-gray-700 bg-gray-800 text-gray-300">
                 <p>
-                  <span className="font-medium">Your real return:</span>{' '}
+                  <span className="font-medium">Real return used:</span>{' '}
                   <span className="font-mono">{realReturnPct}%</span>{' '}
                   <span className="opacity-70">
-                    ({(nominalGrowthRate * 100).toFixed(0)}% growth − {(form.inflationRate * 100).toFixed(1)}% inflation)
+                    (today&rsquo;s-dollar growth — inflation already removed)
                   </span>
                 </p>
-                {realReturnIsNegative && (
-                  <p className="mt-1.5">
-                    <span className="font-medium">Heads up:</span> your assumed inflation is at or above your nominal growth rate, so the portfolio loses purchasing power over time. Delaying retirement may *reduce* probability of success in this configuration. Consider lowering inflation (3% is the long-run US average) or picking a higher growth scenario.
-                  </p>
-                )}
               </div>
             </div>
 

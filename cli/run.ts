@@ -122,17 +122,16 @@ interface ProfileInput {
   /** Number of people on ACA plan. Determines subsidy cliff: 2=$84,600 · 3=$106,120 · 4=$127,640. Default: 2 */
   acaHouseholdSize?: number;
   /** REAL annual portfolio growth rate as a percentage, e.g. 6 means 6% real.
-   *  The engine treats all inputs (contributions, spending, conversions) as today's (real)
-   *  dollars and grows them at this rate. Typical values: 5% (conservative), 6% (Boglehead
-   *  60/40 baseline), 7% (historical equity average). Do NOT enter 9% "nominal" here — the
-   *  retirement-phase inflationFactor starts at 1.0 at retirement year (see inflation-indexed
-   *  conversion targets), so inputs must already be in real dollars.
+   *  The engine simulates entirely in current-year real dollars: contributions, spending,
+   *  account balances, and tax brackets are all real. Typical values: 4% (bond-heavy),
+   *  5% (60/40 Boglehead baseline), 6% (70/30 tilt), 7% (historical equity average).
+   *  Do NOT enter a nominal value (e.g. 9%) — it overstates real purchasing power.
    *  Default: 6. */
   annualGrowthRate?: number;
   /** "us" | "international". International skips ACA season (no cliff). Default: "us" */
   retirementLocation?: 'us' | 'international';
   /** Target federal bracket to fill via Roth conversion each year.
-   *  Engine computes conversion = (bracketCeiling + stdDeduction) × inflationFactor − RMD − SS.
+   *  Engine computes conversion = (bracketCeiling + stdDeduction) − RMD − SS_includable, all real.
    *  Automatically selects conversion_primary engine. Omit for surplus-driven conversions. */
   targetBracket?: '10%' | '12%' | '22%' | '24%' | '32%' | '35%';
   /** Engine selection. "auto" (default): picks conversion_primary when targetBracket is set.

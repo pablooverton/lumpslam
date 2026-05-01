@@ -1,5 +1,5 @@
 {
-  "_comment": "Lumpsum profile template. Copy this file, rename it (e.g. my-profile.json), fill in your numbers.",
+  "_comment": "Lumpsum profile template. Copy this file, rename it (e.g. my-profile.json), fill in your numbers. All amounts are in current-year (today's) real dollars; annualGrowthRate (default 6) is REAL.",
 
   "client": {
     "name": "Mike",

@@ -287,7 +287,7 @@ If pretax grows at 8% per year (≈ $160k/yr on a $2M balance) and the conversio
 The `conversion_treadmill` opportunity check compares the average annual conversion against the annual growth on current pretax. When the conversion is losing, the fix is either:
 
 1. **Raise the target bracket** (22% → 24%) — unlocks ~$188k/yr of additional conversion room, at the cost of an extra 2% marginal rate on that slice
-2. **Reduce the growth assumption** — if you want to compare in real terms, set `annualGrowthRate` to 6% and inputs/outputs move to real dollars
+2. **Lower the growth assumption** — if your portfolio is bond-heavier than the default 6% real, set `annualGrowthRate` to a more conservative figure (e.g. 4% real) so the treadmill check uses an honest growth rate
 
 Without this diagnostic, users feel like they're doing the right thing (converting every year) while mathematically standing still.
 
@@ -404,23 +404,53 @@ The engine projects inherited IRA distributions in `rmd.ts` via `projectInherite
 
 ## 17. Real vs. Nominal Dollars
 
-A retirement projection that doesn't distinguish real from nominal dollars is misleading. The engine is explicit:
+A retirement projection that doesn't distinguish real from nominal dollars is misleading. **The engine simulates entirely in current-year (`profile.currentYear`) real dollars.** Every input, every internal balance, every output number is in today's purchasing power. This matches how serious retirement planners (Bogleheads' RPM, Pralana, Boldin) handle the problem and avoids the unit-mismatch traps of mixed-model engines.
 
-- **Nominal dollars** include inflation. A $100k withdrawal in 2045 at 3% inflation equals ~$55k in 2025 purchasing power.
-- **Real dollars** remove inflation. The same $100k in 2045 nominal is $55k "in 2025 dollars."
+- **Real dollars** are the engine's native unit. A projected balance of $1,200,000 in year 2050 means $1,200,000 of *today's* purchasing power.
+- **Nominal dollars** include inflation. The engine does not surface nominal numbers internally; an optional display-time toggle can convert real → nominal at the user's chosen inflation rate.
 
-The engine grows the portfolio at the user's `annualGrowthRate` (nominal by default, 8%) and then *deflates* the portfolio back to real terms before computing spending capacity. Without this, a 15-year runway at 9% nominal makes the capacity look ~1.56× larger than real purchasing power.
+### The growth rate is REAL
 
-**What is specified in real 2025 dollars:**
-- `baseAnnualSpending`
-- `annualHealthcareCost`
-- Standard deduction (the IRS indexes these, so they are real)
-- Tax bracket ceilings (also indexed; engine inflates them year-by-year implicitly via the deflation pattern)
+`annualGrowthRate` is the **real** rate of return on the portfolio. Default: 6% (~Boglehead 60/40 baseline). Typical values:
 
-**What is specified in nominal dollars:**
-- `mortgageAnnualPayment` (fixed rate, nominal by construction)
+- 4% real — conservative bond-heavy portfolio
+- 5% real — 60/40 blended (default region)
+- 6% real — 70/30 equity tilt
+- 7% real — historical US equity long-run average (1926–2023)
 
-Inside the simulation loop, each year applies `inflationFactor = (1 + inflation)^yearsSinceRetirement` to real-dollar inputs so they scale with time. The tax is computed in real space, then scaled back up to nominal for display.
+Do not enter a nominal value (e.g. 9%). Doing so silently overstates real purchasing power by the inflation factor compounded across the projection — a 30-year retirement at 9% real instead of 6% real would project the portfolio at 2.4× its true purchasing power.
+
+### What inflation does
+
+`inflationRate` is **informational only** in the engine. It is used to:
+
+1. Deflate fixed-nominal items to real terms at each retirement year. A 30-year fixed mortgage of $48,800/yr stays $48,800 in nominal forever — its real value shrinks by `(1+inflation)^year` each year. This is the only spending category whose real value changes over the simulation.
+2. Optionally drive a future "show in nominal" display toggle.
+
+It does **not** inflate spending, healthcare, travel, charitable giving, tax brackets, conversion targets, the standard deduction, or any portfolio balance. Those are all flat in real terms (or stick at 2025 levels for IRS-indexed thresholds).
+
+### Real-sticky thresholds
+
+Tax bracket ceilings, the standard deduction, IRMAA tier floors, and the ACA cliff are all indexed to inflation by their respective agencies. The engine treats them as **real-sticky**: the 2025 dollar levels are applied directly to real MAGI without any inflation gymnastics.
+
+### What is specified in current-year real dollars
+
+- `baseAnnualSpending`, `travelBudget*`, `charitableGivingAnnual`
+- `annualHealthcareCost`, `selfInsuranceAnnualBudget`, `hsaAnnualSpending`
+- Account balances and `costBasis`
+- `oneTimeIncomes[*].amount` and `oneTimeExpenses[*].amount`
+- `fraMonthlyBenefit` (today's-dollar PIA)
+
+### What is specified in nominal dollars
+
+- `mortgageAnnualPayment` (fixed-rate, nominal by construction)
+- Bond ladder line items, when present (also fixed nominal)
+
+The engine deflates these at each retirement year by `(1+inflationRate)^(year − currentYear)` so the spending comparison is always done in real terms.
+
+### Why this matters
+
+A user who entered `annualGrowthRate: 8%` and `inflationRate: 10%` would, in a nominal-internal engine, see a -1.8%/yr real return. Delaying retirement legitimately erodes real wealth in that configuration — but the labels in a mixed-model UI deceive the user into thinking the input was real. The single-unit (real-only) engine eliminates the entire class of confusion: there is no nominal interpretation lurking behind a "nominal 8%" form field.
 
 ---
 

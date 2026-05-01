@@ -4,7 +4,8 @@
     "retirementLocation=international: converts $242k/yr during working years abroad.",
     "Deliberately exceeds ACA cliff — no MAGI optimization, pays full healthcare price.",
     "International mode applies COBRA/conversion mechanics (no ACA cliff constraint).",
-    "HSA reserved for Medicare/Medigap costs post-65."
+    "HSA reserved for Medicare/Medigap costs post-65.",
+    "annualGrowthRate is REAL (engine simulates in today's dollars)."
   ],
 
   "client": {
@@ -30,7 +31,7 @@
 
   "cobraMonths": 0,
   "acaHouseholdSize": 4,
-  "annualGrowthRate": 9,
+  "annualGrowthRate": 6,
   "retirementLocation": "international",
   "targetBracket": "22%",
   "annualContributions": {

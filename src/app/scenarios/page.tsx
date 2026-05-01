@@ -227,7 +227,7 @@ export default function ScenariosPage() {
       </div>
       <p className="text-xs text-gray-600 leading-relaxed mt-3">
         Guardrail: a 3% monthly spending cut triggers only if the portfolio drops 29% from its starting value.
-        All projections inflate spending at {((spending.inflationRate ?? 0.03) * 100).toFixed(0)}%/yr.
+        All projections are in today&rsquo;s dollars; the growth rate is real (inflation already removed).
       </p>
     </div>
   );
