@@ -255,7 +255,7 @@ function assessConversionTreadmill(
   assets: AssetSnapshot,
   projections: YearlyProjection[]
 ): OpportunityAssessment {
-  const growthRate = profile.annualGrowthRate ?? 0.08;
+  const growthRate = profile.annualGrowthRate ?? 0.06;
   // Average annual conversion across the projection (Roth conversion events only).
   const conversionYears = projections.filter((p) => (p.rothConversion?.conversionAmount ?? 0) > 0);
   if (conversionYears.length === 0 || assets.totalPretax <= 0) {

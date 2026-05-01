@@ -9,11 +9,11 @@ import { formatCurrency } from '@/lib/format';
 // ─── Portfolio preset configs ─────────────────────────────────────────────────
 
 const PORTFOLIO_PRESETS = [
-  { label: 'Conservative',    nominal: 0.07, stdDev: 0.09, desc: '40/60 stock/bond' },
-  { label: '60/40 Boglehead', nominal: 0.08, stdDev: 0.12, desc: 'Boglehead baseline' },
-  { label: '70/30',           nominal: 0.09, stdDev: 0.14, desc: 'Moderate equity tilt' },
-  { label: '80/20',           nominal: 0.10, stdDev: 0.15, desc: 'Equity-heavy' },
-  { label: '100% Equity',     nominal: 0.10, stdDev: 0.17, desc: 'Historical US equity' },
+  { label: 'Conservative',    real: 0.04, stdDev: 0.09, desc: '40/60 stock/bond' },
+  { label: '60/40 Boglehead', real: 0.05, stdDev: 0.12, desc: 'Boglehead baseline' },
+  { label: '70/30',           real: 0.06, stdDev: 0.14, desc: 'Moderate equity tilt' },
+  { label: '80/20',           real: 0.07, stdDev: 0.15, desc: 'Equity-heavy' },
+  { label: '100% Equity',     real: 0.07, stdDev: 0.17, desc: 'Historical US equity' },
 ] as const;
 
 // ─── Fan Chart ────────────────────────────────────────────────────────────────
@@ -187,7 +187,7 @@ export default function MonteCarloPage() {
     setTimeout(() => {
       const config: MonteCarloConfig = {
         simulations: simCount,
-        meanNominalReturn: preset.nominal,
+        meanRealReturn: preset.real,
         stdDevReturn: preset.stdDev,
       };
 
@@ -265,13 +265,13 @@ export default function MonteCarloPage() {
                 }`}
               >
                 <div className="font-semibold">{p.label}</div>
-                <div className="opacity-60 mt-0.5">{(p.nominal * 100).toFixed(0)}% · σ={( p.stdDev * 100).toFixed(0)}%</div>
+                <div className="opacity-60 mt-0.5">{(p.real * 100).toFixed(0)}% · σ={( p.stdDev * 100).toFixed(0)}%</div>
               </button>
             ))}
           </div>
           <p className="text-xs text-gray-600 mt-1.5">
-            Mean: <span className="text-gray-400">{(preset.nominal * 100).toFixed(0)}% nominal</span>
-            {' '}(≈{((preset.nominal - 0.03) * 100).toFixed(0)}% real) · Std dev: <span className="text-gray-400">{(preset.stdDev * 100).toFixed(0)}%</span> · {preset.desc}
+            Mean: <span className="text-gray-400">{(preset.real * 100).toFixed(0)}% real</span>
+            {' '}· Std dev: <span className="text-gray-400">{(preset.stdDev * 100).toFixed(0)}%</span> · {preset.desc}
           </p>
         </div>
 
@@ -333,7 +333,7 @@ export default function MonteCarloPage() {
               </div>
               <p className="text-xs text-gray-600 mt-3">
                 {result.simulations.toLocaleString()} trials · {elapsed}ms ·{' '}
-                {preset.nominal * 100}% nominal mean · σ={preset.stdDev * 100}%
+                {preset.real * 100}% real mean · σ={preset.stdDev * 100}%
               </p>
             </div>
           </div>
@@ -351,7 +351,7 @@ export default function MonteCarloPage() {
           <div className="rounded-lg border border-gray-700 bg-gray-900 p-4 text-sm text-gray-400 space-y-2">
             <p className="text-white font-medium text-xs uppercase tracking-wide mb-1">How to read this</p>
             <p>
-              Each trial draws a new random return sequence from N({(preset.nominal * 100).toFixed(0)}%, {(preset.stdDev * 100).toFixed(0)}%) for every retirement year.
+              Each trial draws a new random return sequence from N({(preset.real * 100).toFixed(0)}%, {(preset.stdDev * 100).toFixed(0)}%) for every retirement year.
               A <strong className="text-white">bad sequence</strong> (large losses in the first 5–10 years) can permanently impair
               the portfolio even if long-run average returns are fine — this is sequence-of-returns risk.
             </p>
@@ -361,7 +361,7 @@ export default function MonteCarloPage() {
               working longer, or increasing the guardrail cut.
             </p>
             <p>
-              The deterministic projection on the Retirement Date page uses the flat mean ({(preset.nominal * 100).toFixed(0)}%) —
+              The deterministic projection on the Retirement Date page uses the flat mean ({(preset.real * 100).toFixed(0)}%) —
               that is roughly the median of these Monte Carlo results. The fan shows the uncertainty around that median.
             </p>
           </div>

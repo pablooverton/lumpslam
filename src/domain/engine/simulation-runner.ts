@@ -15,8 +15,11 @@ import { getAcaCliff } from '../constants/aca-thresholds';
 import { RMD_START_AGE } from '../constants/rmd-tables';
 import { getStateInfo } from '../constants/states';
 
-// REAL growth rate default. Engine models everything in today's real dollars.
-// 6% real ≈ 9% nominal at 3% inflation — Boglehead 60/40 baseline.
+// Engine simulates everything in current-year (profile.currentYear) real dollars.
+// annualGrowthRate is REAL: 6% real ≈ 9% nominal at 3% inflation, the Boglehead 60/40 baseline.
+// inflationRate is informational only — used to deflate fixed-nominal items (mortgage payments)
+// to real terms. It does NOT inflate spending, tax brackets, conversion targets, or portfolio
+// balances; those are all already real. See FINANCIAL-PRINCIPLES.md §17.
 const DEFAULT_GROWTH_RATE = 0.06;
 
 export function runSimulation(
@@ -25,7 +28,7 @@ export function runSimulation(
   spending: SpendingProfile,
   guardrails: GuardrailConfig,
   scenarioType: ScenarioType,
-  annualReturnSequence?: number[]  // Monte Carlo injection: per-year nominal returns during retirement. If omitted, uses flat annualGrowthRate.
+  annualReturnSequence?: number[]  // Monte Carlo injection: per-year REAL returns during retirement. If omitted, uses flat annualGrowthRate.
 ): ScenarioResult {
   const baseGrowthRate = profile.annualGrowthRate ?? DEFAULT_GROWTH_RATE;
   // For backward compat: flat growthRate used in accumulation phase and as fallback
@@ -74,8 +77,8 @@ export function runSimulation(
   let hsaBalance = assets.totalHsa;
 
   // Tracked across accumulation years for lifetime-aggregate reporting.
-  // Working-year conversion tax is paid in nominal dollars the year it is incurred;
-  // we accumulate it in nominal and deflate at aggregation time.
+  // Working-year conversion tax is paid in real (today's) dollars per the savings-strategy
+  // model — freeCashFlow is real and the tax is computed against it at the marginal rate.
   const workingYearConversionTaxByYear: number[] = [];
 
   // Resolved per-year allocations — populated only when savingsStrategy is set.
@@ -180,15 +183,9 @@ export function runSimulation(
       ? 'conversion_primary'
       : 'withdrawal_sequencing';
 
-  // The projected portfolio and SS are in nominal retirement-year dollars (grown at nominal rate).
-  // spending.baseAnnualSpending is in today's (current-year) real dollars.
-  // To compare apples-to-apples, deflate the projected portfolio and SS back to real terms
-  // before computing spending capacity. Without this, a 15-year runway at 9% nominal makes the
-  // capacity look ~1.56× larger than the real purchasing power actually is.
-  const inflationAtRetirement = Math.pow(1 + spending.inflationRate, workingYears);
-  const realProjectedLiquid = projectedAssets.totalLiquid / inflationAtRetirement;
-  const realProjectedAssets = { ...projectedAssets, totalLiquid: realProjectedLiquid };
-  const realProjectedAnnualSS = projectedAnnualSS / inflationAtRetirement;
+  // Engine is real-internal: projectedAssets and projectedAnnualSS are already in current-year
+  // real dollars (accumulation grew them at the real rate, SS input is today's-dollar PIA with
+  // actuarial adjustment for claim age). Spending inputs are real too. No deflation needed.
 
   // Brokerage gain ratio: portion of each brokerage withdrawal that is realized gain (and
   // therefore adds to MAGI). Basis is return of capital and is MAGI-invisible.
@@ -203,24 +200,24 @@ export function runSimulation(
       : 0;
 
   const capacityResult = calculateSpendingCapacity(
-    realProjectedAssets,
+    projectedAssets,
     spending,
     guardrails,
     yearsInRetirement,
-    realProjectedAnnualSS
+    projectedAnnualSS
   );
 
-  // Desired spending = all fixed costs the client must cover at retirement start, in real terms.
-  // Essential (baseAnnualSpending) is already in real (current-year) dollars.
-  // Healthcare (annualHealthcareCost) is a real base that inflates each year — Year-0 cost = entered value.
-  // Mortgage is a nominal fixed payment; deflate to real by dividing by inflationAtRetirement so the
-  // comparison with spending capacity (which is also in real terms) is apples-to-apples.
+  // Desired spending = fixed costs the client must cover at retirement start, all in real dollars.
+  // Essential (baseAnnualSpending), healthcare (annualHealthcareCost), and most other line items
+  // are entered in current-year real dollars and stay flat in real terms across retirement.
+  // Mortgage is the exception: it is a fixed nominal payment, so its real value at retirement is
+  // (nominal payment) / (1+inflation)^workingYears, and continues to shrink each retirement year.
   const clientAgeAtRetirement = profile.client.age + (retirementYear - profile.currentYear);
   const mortgageActiveAtRetirement =
     (spending.mortgageAnnualPayment ?? 0) > 0 &&
     clientAgeAtRetirement < (spending.mortgagePaidOffAge ?? 999);
   const realMortgageAtRetirement = mortgageActiveAtRetirement
-    ? (spending.mortgageAnnualPayment ?? 0) / inflationAtRetirement
+    ? (spending.mortgageAnnualPayment ?? 0) / Math.pow(1 + spending.inflationRate, workingYears)
     : 0;
   const realHealthcareAtRetirement = spending.annualHealthcareCost ?? 0;
   const desiredSpending =
@@ -262,7 +259,6 @@ export function runSimulation(
     const yearGrowthRate = annualReturnSequence?.[yearIndex] ?? growthRate;
 
     const season = classifySeasonForYear(year, profile, cobraEndYear);
-    const inflationFactor = Math.pow(1 + spending.inflationRate, yearIndex);
 
     // T5: one-time cash injections (house sale proceeds, inheritance) land in brokerage
     // at the start of the year, before withdrawals/conversions. Amount is in real dollars.
@@ -283,23 +279,26 @@ export function runSimulation(
         ? spending.travelBudgetLate
         : spending.travelBudgetEarly;
 
+    // Mortgage is a fixed nominal payment; its real value shrinks each year of inflation.
+    // realMortgageThisYear = nominal / (1+i)^(year - currentYear).
     const mortgagePayment =
       (spending.mortgageAnnualPayment ?? 0) > 0 &&
       spending.mortgagePaidOffAge !== undefined &&
       clientAge <= spending.mortgagePaidOffAge
-        ? spending.mortgageAnnualPayment!
+        ? (spending.mortgageAnnualPayment ?? 0) /
+          Math.pow(1 + spending.inflationRate, year - profile.currentYear)
         : 0;
 
     // T7: HSA-routed healthcare costs only apply at/after healthcareStartAge (default 65 = Medicare).
     // Pre-Medicare bridge years should fund coverage from baseAnnualSpending instead, since the HSA
     // can't pay ACA premiums. annualHealthcareCost typically represents Medicare Part B/D + Medigap.
+    // Real-internal: healthcare cost is flat in real terms (assumes healthcare CPI ≈ general CPI).
     const healthcareStartAge = spending.healthcareStartAge ?? 65;
     const medicareCost = clientAge >= healthcareStartAge
-      ? (spending.annualHealthcareCost ?? 0) * inflationFactor
+      ? (spending.annualHealthcareCost ?? 0)
       : 0;
-    // Running HSA spend (deductibles, copays, dental, vision) applies in retirement too.
-    // Inflation-indexed because real-world healthcare costs grow with inflation.
-    const runningHsaSpend = (spending.hsaAnnualSpending ?? 0) * inflationFactor;
+    // Running HSA spend (deductibles, copays, dental, vision) is also flat in real terms.
+    const runningHsaSpend = spending.hsaAnnualSpending ?? 0;
     const rawHealthcareCost = medicareCost + runningHsaSpend;
     const fromHsa = Math.min(rawHealthcareCost, hsaBalance);
     const healthcareOverflow = rawHealthcareCost - fromHsa;
@@ -309,10 +308,10 @@ export function runSimulation(
     // user is on Medicare like everyone else and annualHealthcareCost takes over.
     const selfInsureCost =
       season === 'self_insure'
-        ? (spending.selfInsuranceAnnualBudget ?? 0) * inflationFactor
+        ? (spending.selfInsuranceAnnualBudget ?? 0)
         : 0;
     const annualSpending =
-      (spending.baseAnnualSpending + travelBudget + spending.charitableGivingAnnual) * inflationFactor
+      spending.baseAnnualSpending + travelBudget + spending.charitableGivingAnnual
       + mortgagePayment
       + healthcareOverflow
       + selfInsureCost
@@ -368,11 +367,12 @@ export function runSimulation(
       // Best for: no-brokerage, high pre-tax balance, $242k/yr engine strategies.
       // Matches the elective-conversion archetype: pretax → Roth ($242k), Roth pays taxes + living.
 
-      // Bracket-ceiling conversion: fill exactly to the target bracket in real 2025 dollars.
-      // Formula: nominalMagiCapacity = (bracketCeiling + stdDeduction) × inflationFactor
-      //          conversionAmount     = nominalMagiCapacity − RMD − SS_includable − inheritedDist
+      // Bracket-ceiling conversion: fill exactly to the target bracket. All amounts are in
+      // current-year real dollars; tax brackets and the standard deduction are real-sticky
+      // (the IRS indexes them to inflation), so we treat them as constant in real terms.
+      // Formula: magiCapacity     = bracketCeiling + stdDeduction
+      //          conversionAmount = magiCapacity − RMD − SS_includable − inheritedDist − taxableOneTime
       // This automatically:
-      //   - adjusts for inflation (inflationFactor grows the nominal target each year)
       //   - shrinks the conversion as SS phases in (SS includable eats bracket headroom)
       //   - shrinks further as RMDs start at 73 (RMD displaces discretionary conversion)
       const ssIncludable = totalSSAnnual * 0.85;
@@ -381,24 +381,20 @@ export function runSimulation(
         profile.filingStatus,
         FEDERAL_INCOME_TAX_BRACKETS_2025
       );
-      const nominalMagiCapacity = (bracketCeiling + stdDeduction) * inflationFactor;
+      const magiCapacity = bracketCeiling + stdDeduction;
       // Taxable one-time income (rare) consumes bracket room before the conversion.
       const conversionTarget = Math.max(
         0,
-        nominalMagiCapacity - rmd - ssIncludable - inheritedDist - taxableOneTimeIncome
+        magiCapacity - rmd - ssIncludable - inheritedDist - taxableOneTimeIncome
       );
       const conversionAmount = Math.min(conversionTarget, pretaxBalance);
 
       // MAGI = conversion + RMD + SS (85% includable) + inherited IRA distributions + taxable injection
       const magiBase = conversionAmount + rmd + ssIncludable + inheritedDist + taxableOneTimeIncome;
 
-      // Deflate nominal MAGI to 2025 real dollars, subtract standard deduction, calculate
-      // tax in real terms, then scale back to nominal. Models IRS bracket inflation-indexing.
-      const realMagi = magiBase / inflationFactor;
-      const realTaxableIncome = Math.max(0, realMagi - stdDeduction);
-      const realTax = calculateOrdinaryIncomeTax(realTaxableIncome, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025);
-      const totalTax = realTax * inflationFactor;
-      const marginalRate = getMarginalRate(realTaxableIncome, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025);
+      const taxableIncome = Math.max(0, magiBase - stdDeduction);
+      const totalTax = calculateOrdinaryIncomeTax(taxableIncome, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025);
+      const marginalRate = getMarginalRate(taxableIncome, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025);
 
       // T6: lumpy expenses (e.g. rebuy a house) draw from brokerage first, Roth as overflow.
       // Recurring spending (annualSpending minus oneTimeExpense) still funds from Roth net of SS.
@@ -497,8 +493,7 @@ export function runSimulation(
       // Best for: brokerage-backed strategies, ACA cliff optimization.
 
       const incomeGap = Math.max(0, annualSpending - income.total);
-      const nonEssentialSpend =
-        (travelBudget + spending.charitableGivingAnnual) * inflationFactor;
+      const nonEssentialSpend = travelBudget + spending.charitableGivingAnnual;
 
       let fromBrokerage = 0;
       let fromPretax = 0;
@@ -582,14 +577,14 @@ export function runSimulation(
           ? calculateIrmaaSurcharge(getLookbackMagi(magiWithConversion), profile.filingStatus)
           : 0;
 
-      // Deflate to 2025 real dollars, subtract standard deduction, scale tax back to nominal.
-      const realMagiWC = magiWithConversion / inflationFactor;
-      const realTaxableWC = Math.max(0, realMagiWC - stdDeduction);
+      // Real-internal: MAGI is already in current-year real dollars; tax brackets and the
+      // standard deduction are real-sticky (IRS indexes them), so compute tax directly.
+      const taxableWC = Math.max(0, magiWithConversion - stdDeduction);
       const ordinaryIncomeTax = calculateOrdinaryIncomeTax(
-        realTaxableWC,
+        taxableWC,
         profile.filingStatus,
         FEDERAL_INCOME_TAX_BRACKETS_2025
-      ) * inflationFactor;
+      );
       const rothConversionTax = rothConversion?.taxOnConversion ?? 0;
 
       const stateTaxBase = Math.max(0, magi - totalSSAnnual * 0.85);
@@ -690,25 +685,19 @@ export function runSimulation(
   // Strategy-comparison harness needs a single scalar per strategy on several
   // axes: total tax paid (min = tax-minimizing), terminal wealth (max = legacy),
   // early-retirement spending (max = enjoyment), pre-tax depletion year.
-  // All amounts deflated to current-year (profile.currentYear) real dollars.
-  const inflationRate = spending.inflationRate;
-  const deflate = (nominal: number, yearOffset: number): number =>
-    nominal / Math.pow(1 + inflationRate, yearOffset);
+  // All amounts are already in current-year (profile.currentYear) real dollars
+  // because the engine is real-internal — sum directly without deflation.
 
-  // Working-year conversion tax (nominal) → real. y-offset is the accumulation year index.
   const accumulationConversionTaxReal = workingYearConversionTaxByYear.reduce(
-    (sum, nominalTax, y) => sum + deflate(nominalTax, y),
+    (sum, realTax) => sum + realTax,
     0,
   );
 
-  // Retirement-phase tax: sum federal + state per year from yearlyProjections,
-  // deflating nominal amounts to real current-year dollars.
   let retirementFederalTaxReal = 0;
   let retirementStateTaxReal = 0;
   for (const proj of yearlyProjections) {
-    const yOffset = proj.year - profile.currentYear;
-    retirementFederalTaxReal += deflate(proj.taxLiability.totalFederalTax, yOffset);
-    retirementStateTaxReal   += deflate(proj.taxLiability.stateTax,        yOffset);
+    retirementFederalTaxReal += proj.taxLiability.totalFederalTax;
+    retirementStateTaxReal   += proj.taxLiability.stateTax;
   }
 
   // Working-year state tax on conversions (proportion of combined rate that is state).
@@ -722,14 +711,13 @@ export function runSimulation(
   const lifetimeFederalTaxReal = retirementFederalTaxReal + accumulationFederalTaxReal;
   const lifetimeStateTaxReal   = retirementStateTaxReal   + accumulationStateTaxReal;
 
-  // Terminal balances: last projection's end balances, deflated to real.
+  // Terminal balances: last projection's end balances, already in real dollars.
   const last = yearlyProjections[yearlyProjections.length - 1];
-  const terminalYearOffset = last ? last.year - profile.currentYear : 0;
-  const terminalPretaxReal    = last ? deflate(last.pretaxEndBalance,    terminalYearOffset) : 0;
-  const terminalRothReal      = last ? deflate(last.rothEndBalance,      terminalYearOffset) : 0;
-  const terminalBrokerageReal = last ? deflate(last.brokerageEndBalance, terminalYearOffset) : 0;
+  const terminalPretaxReal    = last?.pretaxEndBalance    ?? 0;
+  const terminalRothReal      = last?.rothEndBalance      ?? 0;
+  const terminalBrokerageReal = last?.brokerageEndBalance ?? 0;
   // hsaBalance is tracked as a closure-level number; it gets drawn for healthcare through the loop.
-  const terminalHsaReal = deflate(hsaBalance, terminalYearOffset);
+  const terminalHsaReal = hsaBalance;
   const terminalTotalReal = terminalPretaxReal + terminalRothReal + terminalBrokerageReal + terminalHsaReal;
 
   // Pre-tax depletion: first year pretaxEndBalance drops to ~zero.
@@ -738,19 +726,18 @@ export function runSimulation(
   const pretaxDepletionYear = depletionProj?.year ?? null;
 
   // Early-retirement spending: sum of annualSpending ages 55–65 (the "enjoyment window"),
-  // reconstructed in real current-year dollars. YearlyProjection doesn't surface per-year
-  // annualSpending, so we approximate from withdrawals + SS income + taxes (the outflow side).
+  // already in real dollars. YearlyProjection doesn't surface per-year annualSpending, so we
+  // approximate from withdrawals + SS income − taxes (the outflow side).
   let earlyRetirementSpendingReal = 0;
   for (const proj of yearlyProjections) {
     if (proj.clientAge >= 55 && proj.clientAge <= 65) {
-      const yOffset = proj.year - profile.currentYear;
       const spendingProxy =
         proj.withdrawals.fromRoth +
         proj.withdrawals.fromBrokerage +
         (proj.withdrawals.fromPretax - proj.income.requiredMinimumDistribution) +
         proj.income.socialSecurityClient + proj.income.socialSecuritySpouse -
         proj.taxLiability.totalFederalTax - proj.taxLiability.stateTax;
-      earlyRetirementSpendingReal += Math.max(0, deflate(spendingProxy, yOffset));
+      earlyRetirementSpendingReal += Math.max(0, spendingProxy);
     }
   }
 

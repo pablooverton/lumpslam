@@ -10,13 +10,13 @@
  * Log-normal is theoretically more precise, but for 30-40 year retirement horizons
  * the practical difference is negligible and normal is more transparent.
  *
- * Boglehead-calibrated defaults:
- *   Portfolio      | Nominal mean | Std dev
- *   60/40 blended  |    8%        |  12%    ← default
- *   70/30 tilt     |    9%        |  14%
- *   80/20 equity   |   10%        |  15%
- *   100% equity    |   10%        |  17%
- *   Conservative   |    7%        |   9%
+ * Returns are REAL (engine is real-internal). Boglehead-calibrated defaults:
+ *   Portfolio      | Real mean | Std dev
+ *   Conservative   |    4%     |   9%
+ *   60/40 blended  |    5%     |  12%    ← default
+ *   70/30 tilt     |    6%     |  14%
+ *   80/20 equity   |    7%     |  15%
+ *   100% equity    |    7%     |  17%
  */
 
 import type { ClientProfile } from '../types/profile';
@@ -29,7 +29,7 @@ import { runSimulation } from './simulation-runner';
 
 export interface MonteCarloConfig {
   simulations: number;        // number of trials. 1000 = fast; 5000 = tighter CI
-  meanNominalReturn: number;  // arithmetic mean annual nominal return, e.g. 0.08
+  meanRealReturn: number;     // arithmetic mean annual REAL return, e.g. 0.05 for 60/40
   stdDevReturn: number;       // annualized std dev of annual returns, e.g. 0.12 for 60/40
 }
 
@@ -113,7 +113,7 @@ export function runMonteCarlo(
   for (let sim = 0; sim < config.simulations; sim++) {
     // Generate a unique return sequence for this trial
     const returnSequence = Array.from({ length: retirementYears }, () =>
-      sampleReturn(config.meanNominalReturn, config.stdDevReturn)
+      sampleReturn(config.meanRealReturn, config.stdDevReturn)
     );
 
     const result = runSimulation(

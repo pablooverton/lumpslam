@@ -233,7 +233,7 @@ function runOne(
   if (withMonteCarlo) {
     run.monteCarlo = runMonteCarlo(profile, assets, spending, guardrails, 'retire_at_stated_date', {
       simulations: 1000,
-      meanNominalReturn: profile.annualGrowthRate ?? 0.09,
+      meanRealReturn: profile.annualGrowthRate ?? 0.06,
       stdDevReturn: 0.14,
     });
   }

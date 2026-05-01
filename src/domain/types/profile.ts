@@ -79,9 +79,10 @@ export interface ClientProfile {
   cobraMonths: number;                  // 0 = skip COBRA, go straight to ACA/bridge
   acaHouseholdSize?: number;            // people on ACA plan; determines subsidy cliff. Default: 2
   annualGrowthRate?: number;            // REAL portfolio growth rate. Default: 0.06 (~6% real — Boglehead 60/40 baseline).
-                                        // Engine treats all inputs as today's real dollars; inflationFactor starts at 1.0
-                                        // at retirement year (see roth-conversion inflation-indexing). Setting a nominal
-                                        // value (e.g. 0.09) produces a unit mismatch and overstates portfolio. See README.
+                                        // The engine simulates entirely in current-year real dollars: inputs (contributions,
+                                        // spending, conversion targets) are real, growth is real, and tax brackets are
+                                        // real-sticky (IRS-indexed). Do NOT enter a nominal value (e.g. 0.09); it will
+                                        // overstate the portfolio's real purchasing power. See FINANCIAL-PRINCIPLES.md §17.
   retirementLocation?: 'us' | 'international'; // 'international' skips ACA season. Default: 'us'
   // Healthcare coverage strategy for the pre-Medicare bridge. 'standard' = COBRA → ACA → Medicare.
   // 'self_insure' = no traditional insurance pre-65 (e.g. CrowdHealth-style health-share, medical
@@ -92,7 +93,7 @@ export interface ClientProfile {
   healthcareCoverage?: 'standard' | 'self_insure'; // default: 'standard'
   targetBracket?: '10%' | '12%' | '22%' | '24%' | '32%' | '35%';
   // If set, the engine fills exactly to this bracket ceiling each year via Roth conversion.
-  // Conversion amount = (bracketCeiling + stdDeduction) × inflationFactor − RMD − SS_includable.
+  // Conversion amount = (bracketCeiling + stdDeduction) − RMD − SS_includable (all real).
   // Automatically selects conversion_primary engine and adjusts for SS phase-in and RMDs.
   // Not set = surplus-driven conversions (withdrawal_sequencing archetype, e.g. Mike & Laura).
   spendingEngine?: 'withdrawal_sequencing' | 'conversion_primary' | 'auto';

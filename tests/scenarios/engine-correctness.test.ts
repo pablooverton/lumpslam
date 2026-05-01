@@ -257,8 +257,9 @@ describe('withdrawal_sequencing — targetBracket is respected for conversion si
 //
 // An underfunded early retiree (age 39, $730k, SS at 67) has a 28-year gap before
 // SS starts. The baseline SWR formula includes SS as immediate income and returns
-// 99% probability. The simulation shows the portfolio actually hits $0 at ~age 49.
-// After the fix, probability must be capped well below 99%.
+// 99% probability. With $80k/yr real spending against a 6% real growth rate, the
+// portfolio actually depletes well before SS. After the fix, probability must be
+// capped well below 99%.
 
 const underfundedProfile: ClientProfile = {
   client: {
@@ -294,7 +295,9 @@ const underfundedAccounts: Account[] = [
 const underfundedAssets = deriveAssetTotals(underfundedAccounts, 0);
 
 const underfundedSpending: SpendingProfile = {
-  baseAnnualSpending: 40_000,
+  // 6% real growth on $730k = ~$44k/yr; spending of $80k/yr depletes the portfolio in ~16 years,
+  // well before SS at age 67. This is the genuinely-underfunded shape the probability cap targets.
+  baseAnnualSpending: 80_000,
   travelBudgetEarly: 0,
   travelBudgetLate: 0,
   travelTaperStartAge: 75,
