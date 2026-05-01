@@ -12,7 +12,8 @@ export interface FormState {
   currentYear: number;
   retirementYearDesired: number;
   retireOutsideUS: boolean;
-  healthBridge: 'cobra' | 'aca' | 'spouse_employer';  // US only
+  healthBridge: 'cobra' | 'aca' | 'spouse_employer' | 'self_insure';  // US only
+  selfInsuranceAnnualBudget: number;  // only used when healthBridge === 'self_insure'
   dependentsOnPlan: number;          // children/other dependents (not client or spouse) on health plan
   growthScenario: 'pessimistic' | 'conservative' | 'moderate' | 'optimistic' | 'historical';
   accounts: Account[];
@@ -58,7 +59,13 @@ export function buildFormState(
     currentYear: profile?.currentYear ?? new Date().getFullYear(),
     retirementYearDesired: profile?.retirementYearDesired ?? new Date().getFullYear() + 5,
     retireOutsideUS: profile?.retirementLocation === 'international',
-    healthBridge: (profile?.cobraMonths ?? 0) > 0 ? 'cobra' : 'aca',
+    healthBridge:
+      profile?.healthcareCoverage === 'self_insure'
+        ? 'self_insure'
+        : (profile?.cobraMonths ?? 0) > 0
+        ? 'cobra'
+        : 'aca',
+    selfInsuranceAnnualBudget: spending?.selfInsuranceAnnualBudget ?? 0,
     dependentsOnPlan: Math.max(0, (profile?.acaHouseholdSize ?? 2) - 1 - (profile?.spouse ? 1 : 0)),
     growthScenario: (() => {
       const r = profile?.annualGrowthRate ?? 0.08;

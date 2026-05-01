@@ -305,10 +305,17 @@ export function runSimulation(
     const healthcareOverflow = rawHealthcareCost - fromHsa;
 
     const oneTimeExpense = spending.oneTimeExpenses.find((e) => e.year === year)?.amount ?? 0;
+    // Self-insure budget applies only during the 'self_insure' season (pre-65). Post-65 the
+    // user is on Medicare like everyone else and annualHealthcareCost takes over.
+    const selfInsureCost =
+      season === 'self_insure'
+        ? (spending.selfInsuranceAnnualBudget ?? 0) * inflationFactor
+        : 0;
     const annualSpending =
       (spending.baseAnnualSpending + travelBudget + spending.charitableGivingAnnual) * inflationFactor
       + mortgagePayment
       + healthcareOverflow
+      + selfInsureCost
       + oneTimeExpense;
 
     // Social Security income
@@ -497,7 +504,7 @@ export function runSimulation(
       let fromPretax = 0;
       let fromRoth = 0;
 
-      if (season === 'cobra' || season === 'international') {
+      if (season === 'cobra' || season === 'international' || season === 'self_insure') {
         fromBrokerage = Math.min(nonEssentialSpend, brokerageBalance, incomeGap);
         const remainingGap = incomeGap - fromBrokerage;
         fromPretax = Math.min(remainingGap, pretaxBalance);
@@ -547,7 +554,7 @@ export function runSimulation(
         otherIncome: inheritedDist,
       });
 
-      if ((season === 'cobra' || season === 'international' || season === 'medicare' || season === 'rmd') && pretaxBalance > 0) {
+      if ((season === 'cobra' || season === 'international' || season === 'self_insure' || season === 'medicare' || season === 'rmd') && pretaxBalance > 0) {
         const surplus = capacityResult.spendingCapacity - spending.baseAnnualSpending;
         const TARGET_BRACKET_CEILING = getBracketCeiling(
           profile.targetBracket ?? '22%',

@@ -7,7 +7,7 @@ import type { ScenarioType } from '@/domain/types/scenarios';
 const LABELS: Record<ScenarioType, string> = {
   retire_now:            'Retire Now',
   retire_at_stated_date: 'Target Date',
-  no_change:             '+3 Years',
+  no_change:             'Delay 3 yrs',
 };
 
 export function ScenarioSelector() {
@@ -15,6 +15,18 @@ export function ScenarioSelector() {
   const { profile } = useProfileStore();
 
   if (scenarios.length === 0 || !profile) return null;
+
+  // Already-retired sentinel: target year ≤ current year AND no contributions in flight.
+  // In this state the "Delay 3 yrs" scenario means "delay touching the portfolio while
+  // any conversion engine keeps running" — surface a tooltip cue so users don't read
+  // it as "keep working 3 more years."
+  const totalContrib =
+    (profile.annualContributions?.pretax ?? 0) +
+    (profile.annualContributions?.roth ?? 0) +
+    (profile.annualContributions?.brokerage ?? 0) +
+    (profile.annualContributions?.hsa ?? 0);
+  const targetYear = profile.retirementYearDesired ?? profile.currentYear;
+  const alreadyRetired = targetYear <= profile.currentYear && totalContrib === 0 && !profile.savingsStrategy;
 
   return (
     <div className="flex items-center gap-2">
@@ -25,11 +37,15 @@ export function ScenarioSelector() {
           if (!scenario) return null;
           const isSelected = selectedScenarioType === type;
           const retireAge = profile.client.age + (scenario.retirementYear - profile.currentYear);
+          const annotateNoIncome = type === 'no_change' && alreadyRetired;
+          const tooltip = annotateNoIncome
+            ? `Retire ${scenario.retirementYear} · age ${retireAge} — no income during the delay; conversions continue if engine fires`
+            : `Retire ${scenario.retirementYear} · age ${retireAge}`;
           return (
             <button
               key={type}
               onClick={() => setSelectedScenarioType(type)}
-              title={`Retire ${scenario.retirementYear} · age ${retireAge}`}
+              title={tooltip}
               className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
                 isSelected
                   ? 'bg-blue-600 text-white'
@@ -38,6 +54,7 @@ export function ScenarioSelector() {
             >
               {LABELS[type]}
               <span className="ml-1 opacity-60">{scenario.retirementYear}</span>
+              {annotateNoIncome && <span className="ml-1 opacity-60" aria-label="no income during delay">ⓘ</span>}
             </button>
           );
         })}

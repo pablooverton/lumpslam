@@ -1,6 +1,8 @@
 // 'international' = pre-Medicare years when retirementLocation=international.
-// Same engine rules as 'cobra' (no MAGI cliff, free conversions) but distinct for display.
-export type RetirementSeason = 'cobra' | 'aca' | 'medicare' | 'rmd' | 'international';
+// 'self_insure'   = pre-Medicare years when healthcareCoverage=self_insure.
+// All three of cobra/international/self_insure share engine rules: no ACA MAGI cliff,
+// free conversions, healthcare cost handled outside the ACA-subsidy framework.
+export type RetirementSeason = 'cobra' | 'aca' | 'medicare' | 'rmd' | 'international' | 'self_insure';
 
 export interface IncomeBreakdown {
   socialSecurityClient: number;

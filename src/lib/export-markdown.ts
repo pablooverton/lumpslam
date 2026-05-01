@@ -65,7 +65,7 @@ export function buildMarkdownExport(params: {
   lines.push(`| Retirement Location | ${profile.retirementLocation === 'international' ? 'International (no ACA cliff)' : 'US'} |`);
   lines.push(`| COBRA Months | ${profile.cobraMonths} |`);
   lines.push(`| ACA Household Size | ${profile.acaHouseholdSize ?? 2} |`);
-  lines.push(`| Annual Growth Rate | ${((profile.annualGrowthRate ?? 0.06) * 100).toFixed(1)}% real |`);
+  lines.push(`| Annual Growth Rate | ${((profile.annualGrowthRate ?? 0.06) * 100).toFixed(1)}% nominal |`);
   if (profile.targetBracket) {
     lines.push(`| Target Conversion Bracket | Fill to ${profile.targetBracket} ceiling |`);
   }
@@ -134,10 +134,10 @@ export function buildMarkdownExport(params: {
   const scenarioList = [
     ['Retire Now', retireNow],
     ['Target Retire Date', retireStated],
-    ['Status Quo', noChange],
+    ['Delay 3 yrs', noChange],
   ] as const;
 
-  lines.push('| | Retire Now | Target Retire Date | Status Quo |');
+  lines.push('| | Retire Now | Target Retire Date | Delay 3 yrs |');
   lines.push('|-|-----------|-------------------|------------|');
 
   function row(label: string, fn: (s: ScenarioResult) => string) {

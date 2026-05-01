@@ -28,6 +28,15 @@ export function classifySeasonForYear(
     return 'rmd';
   }
 
+  // Self-insure: skip ACA entirely pre-65. Same engine rules as international/COBRA
+  // (no MAGI cliff). Medicare still picks up at 65 — opting out of Medicare carries
+  // lifetime late-enrollment penalties that dominate any savings.
+  if (profile.healthcareCoverage === 'self_insure') {
+    if (clientAge < 65) return 'self_insure';
+    if (clientAge < RMD_START_AGE) return 'medicare';
+    return 'rmd';
+  }
+
   // US path: COBRA only applies when cobraMonths > 0
   if (profile.cobraMonths > 0 && year <= cobraEndYear) return 'cobra';
   if (clientAge < 65) return 'aca';

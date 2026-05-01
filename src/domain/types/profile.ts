@@ -83,6 +83,13 @@ export interface ClientProfile {
                                         // at retirement year (see roth-conversion inflation-indexing). Setting a nominal
                                         // value (e.g. 0.09) produces a unit mismatch and overstates portfolio. See README.
   retirementLocation?: 'us' | 'international'; // 'international' skips ACA season. Default: 'us'
+  // Healthcare coverage strategy for the pre-Medicare bridge. 'standard' = COBRA → ACA → Medicare.
+  // 'self_insure' = no traditional insurance pre-65 (e.g. CrowdHealth-style health-share, medical
+  // tourism, true self-pay). Engine skips ACA cliff/IRMAA gymnastics for the pre-65 window and
+  // adds spending.selfInsuranceAnnualBudget (real dollars, inflates yearly) to spending. Medicare
+  // still kicks in at 65 unless the user explicitly opts out (not currently modeled — opting out
+  // of Medicare carries lifetime late-enrollment penalties that dominate the savings).
+  healthcareCoverage?: 'standard' | 'self_insure'; // default: 'standard'
   targetBracket?: '10%' | '12%' | '22%' | '24%' | '32%' | '35%';
   // If set, the engine fills exactly to this bracket ceiling each year via Roth conversion.
   // Conversion amount = (bracketCeiling + stdDeduction) × inflationFactor − RMD − SS_includable.

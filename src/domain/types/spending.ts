@@ -51,4 +51,14 @@ export interface SpendingProfile {
   // HSA as a pure investment vehicle, which overstates terminal HSA balance.
   // Typical: $3-5k/yr for a family of 4-6 with employer coverage.
   hsaAnnualSpending?: number;
+
+  // Annual healthcare budget when client.healthcareCoverage === 'self_insure'. Applied to the
+  // pre-Medicare window only (the post-65 budget is annualHealthcareCost, same as standard).
+  // Real (today's) dollars; inflates yearly during retirement. Examples for sizing:
+  //   ~$0–$3k    direct primary care + cash-pay routine
+  //   ~$5–$8k    health-share membership (Samaritan, Medi-Share)
+  //   ~$15–25k   CrowdHealth-style catastrophic-mimicking program (event/year cap)
+  //   + medical-tourism budget for planned surgeries (10× discount on US sticker price)
+  // Default: 0 (treats self-insure as pure self-pay with no recurring premium).
+  selfInsuranceAnnualBudget?: number;
 }

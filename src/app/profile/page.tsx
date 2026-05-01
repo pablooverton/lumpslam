@@ -108,7 +108,10 @@ export default function ProfilePage() {
 
   function handleSubmit() {
     const retirementLocation: 'us' | 'international' = form.retireOutsideUS ? 'international' : 'us';
-    const cobraMonths = form.retireOutsideUS ? 0 : form.healthBridge === 'cobra' ? 18 : 0;
+    const isSelfInsure = !form.retireOutsideUS && form.healthBridge === 'self_insure';
+    const cobraMonths = form.retireOutsideUS || isSelfInsure
+      ? 0
+      : form.healthBridge === 'cobra' ? 18 : 0;
     const acaHouseholdSize = 1 + (form.hasSpouse ? 1 : 0) + form.dependentsOnPlan;
     const annualGrowthRate =
       form.growthScenario === 'pessimistic'  ? 0.06
@@ -135,6 +138,7 @@ export default function ProfilePage() {
       acaHouseholdSize,
       annualGrowthRate,
       retirementLocation,
+      ...(isSelfInsure && { healthcareCoverage: 'self_insure' as const }),
       targetBracket: form.targetBracket,
       annualContributions: totalContribs > 0 ? form.annualContributions : undefined,
     };
@@ -153,6 +157,9 @@ export default function ProfilePage() {
       }),
       ...(form.annualHealthcareCost > 0 && {
         annualHealthcareCost: form.annualHealthcareCost,
+      }),
+      ...(isSelfInsure && {
+        selfInsuranceAnnualBudget: form.selfInsuranceAnnualBudget,
       }),
     };
 
@@ -184,6 +191,17 @@ export default function ProfilePage() {
     form.annualContributions.hsa;
   const workingYears = form.retirementYearDesired - form.currentYear;
   const selectedDemoEntry = DEMOS.find((d) => d.key === selectedDemo);
+
+  // Resolved nominal growth rate from the scenario picker (mirrors the mapping in handleSubmit).
+  const nominalGrowthRate =
+    form.growthScenario === 'pessimistic'  ? 0.06
+    : form.growthScenario === 'conservative' ? 0.07
+    : form.growthScenario === 'optimistic'   ? 0.09
+    : form.growthScenario === 'historical'   ? 0.10
+    : 0.08;
+  const realReturn = nominalGrowthRate - form.inflationRate;
+  const realReturnPct = (realReturn * 100).toFixed(1);
+  const realReturnIsNegative = realReturn <= 0;
 
   return (
     <div className="max-w-3xl">
@@ -338,6 +356,7 @@ export default function ProfilePage() {
                     { value: 'cobra',           label: 'COBRA — 18 months',         desc: 'Continue your employer\'s plan. You pay the full premium for up to 18 months, then move to ACA.' },
                     { value: 'aca',             label: 'ACA Marketplace',            desc: 'Enroll directly in a marketplace plan at retirement. Subsidies available if income stays below the eligibility threshold.' },
                     { value: 'spouse_employer', label: 'Spouse\'s employer',         desc: 'Covered under your spouse\'s employer plan until Medicare. No ACA enrollment needed.' },
+                    { value: 'self_insure',     label: 'Self-insure (no traditional plan)', desc: 'No ACA, no COBRA. Cover health costs out-of-pocket, with a health-share program (CrowdHealth, Samaritan), or through medical tourism for planned procedures. No MAGI cliff to manage; conversions can run freely. Real out-of-pocket risk.' },
                   ] as const).map(({ value, label, desc }) => (
                     <label
                       key={value}
@@ -361,10 +380,28 @@ export default function ProfilePage() {
                     </label>
                   ))}
                 </div>
+                {form.healthBridge === 'self_insure' && (
+                  <div className="mt-3 px-3 py-3 rounded border border-blue-900 bg-blue-950/40">
+                    <Field label="Anticipated annual healthcare budget (pre-Medicare)">
+                      <div className="relative w-40">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 text-sm pointer-events-none">$</span>
+                        <NumericInput
+                          value={form.selfInsuranceAnnualBudget}
+                          onChange={(v) => set('selfInsuranceAnnualBudget', v)}
+                          min={0}
+                          className={inputClass + ' pl-6'}
+                        />
+                      </div>
+                      <p className="text-xs text-gray-500 mt-2 leading-relaxed">
+                        Real (today’s) dollars; inflates yearly. Sizing examples: <span className="text-gray-300">$0–3k</span> direct primary care + cash routine, <span className="text-gray-300">$5–8k</span> health-share membership (Samaritan, Medi-Share), <span className="text-gray-300">$15–25k</span> CrowdHealth-style catastrophic-mimicking program with per-event/year cap. Add a separate budget for medical-tourism procedures (often 10× cheaper than US sticker price). Medicare still kicks in at 65 — opting out carries lifetime late-enrollment penalties.
+                      </p>
+                    </Field>
+                  </div>
+                )}
               </div>
             )}
 
-            {!form.retireOutsideUS && form.healthBridge !== 'spouse_employer' && (
+            {!form.retireOutsideUS && form.healthBridge !== 'spouse_employer' && form.healthBridge !== 'self_insure' && (
               <div>
                 <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-1.5">
                   Children or other dependents on your health plan in early retirement?
@@ -661,6 +698,26 @@ export default function ProfilePage() {
               <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
                 Nominal annual return (assuming ~3% inflation). Moderate (8%) ≈ 5% real — consistent with a 60/40 global portfolio and Boglehead planning consensus. Historical US equities ~10% nominal / ~7% real (1926–2023).
               </p>
+              <div
+                className={`mt-3 px-3 py-2 rounded text-xs leading-relaxed border ${
+                  realReturnIsNegative
+                    ? 'border-amber-700 bg-amber-950 text-amber-200'
+                    : 'border-gray-700 bg-gray-800 text-gray-300'
+                }`}
+              >
+                <p>
+                  <span className="font-medium">Your real return:</span>{' '}
+                  <span className="font-mono">{realReturnPct}%</span>{' '}
+                  <span className="opacity-70">
+                    ({(nominalGrowthRate * 100).toFixed(0)}% growth − {(form.inflationRate * 100).toFixed(1)}% inflation)
+                  </span>
+                </p>
+                {realReturnIsNegative && (
+                  <p className="mt-1.5">
+                    <span className="font-medium">Heads up:</span> your assumed inflation is at or above your nominal growth rate, so the portfolio loses purchasing power over time. Delaying retirement may *reduce* probability of success in this configuration. Consider lowering inflation (3% is the long-run US average) or picking a higher growth scenario.
+                  </p>
+                )}
+              </div>
             </div>
 
             {workingYears > 0 && (
