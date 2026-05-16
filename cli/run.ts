@@ -28,6 +28,7 @@ import type { Account } from '../src/domain/types/assets';
 import type { SpendingProfile, OneTimeExpense } from '../src/domain/types/spending';
 import type { GuardrailConfig } from '../src/domain/types/scenarios';
 import { runSimulation } from '../src/domain/engine/simulation-runner';
+import { runMonteCarlo, type MonteCarloConfig } from '../src/domain/engine/monte-carlo';
 import { buildSocialSecurityComparison } from '../src/domain/engine/social-security';
 import { assessOpportunities } from '../src/domain/engine/opportunities';
 import { buildContingencyReport } from '../src/domain/engine/contingency';
@@ -293,7 +294,8 @@ Usage:
   npx tsx cli/run.ts <profile.json> [command] [options]
 
 Commands:
-  scenarios         Three-scenario comparison (default)
+  scenarios         Three-scenario comparison (default; probability = SWR heuristic)
+  mc [trials]       Monte Carlo on the target-date scenario (default 2000 trials)
   seasons [N]       Year-by-year table (N years, default 30)
   roth              Roth conversion schedule
   ss                Social Security timing analysis
@@ -304,6 +306,8 @@ Commands:
 
 Options:
   --json            Output raw JSON
+  --std=X.XX        Std dev for Monte Carlo (default 0.14 = 70/30 tilt)
+  --mean=X.XX       Override arithmetic mean for Monte Carlo (default = profile annualGrowthRate)
 
 Example:
   npx tsx cli/run.ts cli/profile-template.json
@@ -316,6 +320,10 @@ Example:
   // Parse flags
   const jsonMode = args.includes('--json');
   const withMonteCarlo = args.includes('--mc');
+  const stdFlag = args.find((a) => a.startsWith('--std='));
+  const meanFlag = args.find((a) => a.startsWith('--mean='));
+  const mcStdDev = stdFlag ? parseFloat(stdFlag.split('=')[1]) : 0.14;
+  const mcMeanOverride = meanFlag ? parseFloat(meanFlag.split('=')[1]) : null;
   const cleanArgs = args.filter((a) => !a.startsWith('--'));
 
   const filePath = resolve(process.cwd(), cleanArgs[0]);
@@ -408,6 +416,32 @@ Example:
     default:
       printScenarios(scenarios);
       break;
+
+    case 'mc': {
+      const trials = commandArg ? parseInt(commandArg, 10) : 2000;
+      const mcConfig: MonteCarloConfig = {
+        simulations: trials,
+        meanRealReturn: mcMeanOverride ?? (profile.annualGrowthRate ?? 0.06),
+        stdDevReturn: mcStdDev,
+      };
+      const mc = runMonteCarlo(profile, assets, spending, guardrails, 'retire_at_stated_date', mcConfig);
+      const heuristic = retireStated.probabilityOfSuccess;
+      const fmt = (n: number) => n >= 1_000_000
+        ? `$${(n / 1_000_000).toFixed(2)}M`
+        : `$${Math.round(n / 1000)}k`;
+      console.log(`\n  ${'\x1b[1m'}MONTE CARLO — ${trials.toLocaleString()} trials${'\x1b[0m'}`);
+      console.log(`  ${'\x1b[2m'}Mean ${(mcConfig.meanRealReturn * 100).toFixed(1)}% real, StdDev ${(mcConfig.stdDevReturn * 100).toFixed(0)}% (Normal, clamped ±60%)${'\x1b[0m'}`);
+      console.log(`  ${'\x1b[36m'}${'─'.repeat(60)}${'\x1b[0m'}`);
+      console.log(`  Heuristic probability (SWR-based): ${(heuristic * 100).toFixed(1)}%`);
+      console.log(`  Monte Carlo success rate:          ${(mc.successRate * 100).toFixed(1)}%`);
+      console.log(`  Final portfolio percentiles (real, 2026 dollars):`);
+      console.log(`    p10 (stress):  ${fmt(mc.p10FinalPortfolio)}`);
+      console.log(`    p25:           ${fmt(mc.p25FinalPortfolio)}`);
+      console.log(`    median:        ${fmt(mc.medianFinalPortfolio)}`);
+      console.log(`    p75:           ${fmt(mc.p75FinalPortfolio)}`);
+      console.log(`    p90:           ${fmt(mc.p90FinalPortfolio)}`);
+      break;
+    }
 
     case 'seasons': {
       const years = commandArg ? parseInt(commandArg, 10) : 30;
