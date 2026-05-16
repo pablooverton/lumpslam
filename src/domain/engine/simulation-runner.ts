@@ -467,10 +467,24 @@ export function runSimulation(
       const lumpyOverflowToRoth = oneTimeExpense - lumpyFromBrokerage;
       const rothSpendingDraw = Math.max(0, recurringSpending - totalSSAnnual) + lumpyOverflowToRoth;
 
-      // If Roth can't cover spending + taxes, draw emergency amount from pretax
+      // Funding cascade when Roth alone can't cover spending + taxes:
+      //   Tier 1: Roth (rothAvailable = balance + conversion-in)
+      //   Tier 2: emergency draw from pretax (preserves brokerage for tax-efficient growth)
+      //   Tier 3: emergency draw from brokerage (last resort when both pretax and Roth depleted)
+      // Bug fix 2026-05-15: prior code only had Tier 2 — when both Roth AND pretax were depleted
+      // but brokerage had money, the engine silently failed to draw any spending. This made
+      // extreme early-retirement scenarios appear feasible by phantom-zero-spending years.
       const totalRothNeed = totalTax + rothSpendingDraw;
-      const rothAvailable = rothBalance + conversionAmount; // Roth balance after conversion in
-      const emergencyPretaxDraw = Math.max(0, totalRothNeed - rothAvailable);
+      const rothAvailable = rothBalance + conversionAmount;
+      let unfundedFromRoth = Math.max(0, totalRothNeed - rothAvailable);
+
+      const emergencyPretaxDraw = Math.min(unfundedFromRoth, pretaxBalance);
+      unfundedFromRoth -= emergencyPretaxDraw;
+
+      const emergencyBrokerageDraw = Math.min(unfundedFromRoth, brokerageBalance - lumpyFromBrokerage);
+      // Note: unfundedFromRoth after this still > 0 means TRUE depletion — Roth+pretax+brokerage all empty.
+      // The engine doesn't synthetically create money; the portfolio simply runs out and downstream
+      // probability calc will flag it. MC depletion-floor (< $10k) will count the trial as a failure.
 
       magi = magiBase;
 
@@ -483,10 +497,10 @@ export function runSimulation(
       };
 
       withdrawals = {
-        fromPretax: rmd + emergencyPretaxDraw, // only RMD and emergency; spending is from Roth
-        fromBrokerage: lumpyFromBrokerage,
+        fromPretax: rmd + emergencyPretaxDraw,
+        fromBrokerage: lumpyFromBrokerage + emergencyBrokerageDraw,
         fromRoth: rothSpendingDraw,
-        total: rmd + emergencyPretaxDraw + rothSpendingDraw + lumpyFromBrokerage,
+        total: rmd + emergencyPretaxDraw + rothSpendingDraw + lumpyFromBrokerage + emergencyBrokerageDraw,
       };
 
       // Portfolio updates
@@ -495,8 +509,9 @@ export function runSimulation(
       pretaxBalance = Math.max(0, pretaxBalance - rmd - emergencyPretaxDraw - conversionAmount);
       // Roth: gains conversion, pays taxes and spending
       rothBalance = Math.max(0, rothBalance + conversionAmount - totalTax - rothSpendingDraw);
-      // T6: brokerage funds the lumpy expense before any growth
-      brokerageBalance = Math.max(0, brokerageBalance - lumpyFromBrokerage);
+      // T6: brokerage funds the lumpy expense; Tier-3 fallback also draws from brokerage when
+      // Roth + pretax cannot cover annual spending.
+      brokerageBalance = Math.max(0, brokerageBalance - lumpyFromBrokerage - emergencyBrokerageDraw);
       inheritedIraBalance = Math.max(0, inheritedIraBalance - inheritedDist);
       hsaBalance = Math.max(0, hsaBalance - fromHsa);
 
