@@ -199,19 +199,8 @@ export function runSimulation(
       ? Math.max(0, Math.min(1, (assets.totalBrokerage - totalBrokerageBasis) / assets.totalBrokerage))
       : 0;
 
-  const capacityResult = calculateSpendingCapacity(
-    projectedAssets,
-    spending,
-    guardrails,
-    yearsInRetirement,
-    projectedAnnualSS
-  );
-
   // Desired spending = fixed costs the client must cover at retirement start, all in real dollars.
-  // Essential (baseAnnualSpending), healthcare (annualHealthcareCost), and most other line items
-  // are entered in current-year real dollars and stay flat in real terms across retirement.
-  // Mortgage is the exception: it is a fixed nominal payment, so its real value at retirement is
-  // (nominal payment) / (1+inflation)^workingYears, and continues to shrink each retirement year.
+  // Computed BEFORE spending-capacity so we can pass mortgage + conversion tax into the heuristic.
   const clientAgeAtRetirement = profile.client.age + (retirementYear - profile.currentYear);
   const mortgageActiveAtRetirement =
     (spending.mortgageAnnualPayment ?? 0) > 0 &&
@@ -224,6 +213,38 @@ export function runSimulation(
     spending.baseAnnualSpending + realMortgageAtRetirement + realHealthcareAtRetirement;
   const yearlyProjections: YearlyProjection[] = [];
   const stdDeduction = STANDARD_DEDUCTION_2025[profile.filingStatus];
+
+  // ─── Heuristic bridge context ──────────────────────────────────────────────
+  // Pre-SS bridge length: years from retirement until the earlier of the two SS claim ages.
+  const clientSsStartYear = profile.currentYear + (profile.client.socialSecurityClaimAge - profile.client.age);
+  const spouseSsStartYear = profile.spouse
+    ? profile.currentYear + (profile.spouse.socialSecurityClaimAge - profile.spouse.age)
+    : clientSsStartYear;
+  const earliestSsStartYear = Math.min(clientSsStartYear, spouseSsStartYear);
+  const bridgeYears = Math.max(0, earliestSsStartYear - retirementYear);
+
+  // Estimated annual conversion tax during bridge: only relevant when conversion engine is active.
+  // Uses the same bracket-ceiling math the retirement loop uses, with SS=0 (bridge years).
+  let estimatedAnnualConversionTax = 0;
+  if (profile.targetBracket && projectedAssets.totalPretax > 0) {
+    const bracketCeiling = getBracketCeiling(profile.targetBracket, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025);
+    const conversionAmount = Math.min(bracketCeiling + stdDeduction, projectedAssets.totalPretax);
+    const taxableIncome = Math.max(0, conversionAmount - stdDeduction);
+    const fedTax = calculateOrdinaryIncomeTax(taxableIncome, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025);
+    const stateInfo = getStateInfo(profile.stateOfResidence);
+    const stateRateEst = stateInfo?.hasIncomeTax ? (stateInfo.topMarginalRate ?? 0) : 0;
+    const stateTaxEst = conversionAmount * stateRateEst;
+    estimatedAnnualConversionTax = fedTax + stateTaxEst;
+  }
+
+  const capacityResult = calculateSpendingCapacity(
+    projectedAssets,
+    spending,
+    guardrails,
+    yearsInRetirement,
+    projectedAnnualSS,
+    { bridgeYears, realMortgageAtRetirement, estimatedAnnualConversionTax }
+  );
 
   // IRMAA surcharges are based on MAGI from 2 years prior (the "lookback MAGI"). Tracking per-year
   // MAGI history lets us price this correctly: a big Roth conversion in year N triggers an IRMAA
@@ -242,6 +263,23 @@ export function runSimulation(
     adjustedRemainingYears,
     growthRate
   );
+
+  // ─── Guardrail state ─────────────────────────────────────────────────────────
+  // Track portfolio peak from retirement onward; apply spending cut to variable
+  // components (essential + travel + charitable) when drawdown exceeds threshold.
+  // Two-tier ratchet matching Guyton-Klinger style:
+  //   - drawdown ≥ lowerGuardrailDropPct      → cut by lowerGuardrailSpendingCutPct
+  //   - drawdown ≥ deepDropPct (default 2×)   → cut by deepCutPct (default 2×, capped 30%)
+  //   - drawdown < recoveryThresholdPct       → restore to baseline (no cut)
+  // Cuts apply ONLY to variable spending — mortgage, healthcare, taxes, lumpy expenses
+  // are non-discretionary and remain unchanged.
+  let peakPortfolio = 0;
+  let currentGuardrailCutPct = 0;
+  const firstTierDrop = guardrails.lowerGuardrailDropPct;
+  const firstTierCut = guardrails.lowerGuardrailSpendingCutPct;
+  const deepTierDrop = guardrails.deepDropPct ?? (firstTierDrop * 2);
+  const deepTierCut = Math.min(0.30, guardrails.deepCutPct ?? (firstTierCut * 2));
+  const recoveryThreshold = guardrails.recoveryThresholdPct ?? 0.10;
 
   for (let year = retirementYear; year <= endYear; year++) {
     const yearIndex = year - retirementYear;
@@ -310,8 +348,34 @@ export function runSimulation(
       season === 'self_insure'
         ? (spending.selfInsuranceAnnualBudget ?? 0)
         : 0;
+
+    // ─── Guardrail evaluation ────────────────────────────────────────────────
+    // Compute portfolio at year start (after oneTimeIncome injection from earlier in this iter,
+    // before any withdrawals). This is the basis for drawdown measurement.
+    const portfolioAtYearStart =
+      pretaxBalance + rothBalance + brokerageBalance + inheritedIraBalance + hsaBalance;
+    if (portfolioAtYearStart > peakPortfolio) peakPortfolio = portfolioAtYearStart;
+    const drawdownFromPeak = peakPortfolio > 0
+      ? (peakPortfolio - portfolioAtYearStart) / peakPortfolio
+      : 0;
+    // Tier evaluation: ratchet up cuts as drawdown deepens; restore to baseline on recovery.
+    if (drawdownFromPeak >= deepTierDrop) {
+      currentGuardrailCutPct = deepTierCut;
+    } else if (drawdownFromPeak >= firstTierDrop) {
+      currentGuardrailCutPct = Math.max(currentGuardrailCutPct, firstTierCut);
+    } else if (drawdownFromPeak < recoveryThreshold) {
+      currentGuardrailCutPct = 0;
+    }
+    // Apply cut to VARIABLE spending only: essential + travel + charitable.
+    // NOT to mortgage (contractual), healthcare (medical), taxes (driven by conversion), or
+    // oneTimeExpense (capital). This matches how guardrails work in practice — you cut
+    // lifestyle, you don't skip the mortgage.
+    const variableSpending =
+      spending.baseAnnualSpending + travelBudget + spending.charitableGivingAnnual;
+    const adjustedVariable = variableSpending * (1 - currentGuardrailCutPct);
+
     const annualSpending =
-      spending.baseAnnualSpending + travelBudget + spending.charitableGivingAnnual
+      adjustedVariable
       + mortgagePayment
       + healthcareOverflow
       + selfInsureCost
@@ -482,6 +546,8 @@ export function runSimulation(
         estimatedAcaSavings: acaResult?.estimatedAnnualSavings ?? 0,
         irmaaApplies: irmaaSurcharge > 0,
         irmaaSurcharge,
+        guardrailCutPct: currentGuardrailCutPct,
+        peakPortfolio,
       });
       magiHistory.push(magi);
 
@@ -652,6 +718,8 @@ export function runSimulation(
         estimatedAcaSavings: acaResult?.estimatedAnnualSavings ?? 0,
         irmaaApplies: irmaaSurcharge > 0,
         irmaaSurcharge,
+        guardrailCutPct: currentGuardrailCutPct,
+        peakPortfolio,
       });
       magiHistory.push(magi);
     }

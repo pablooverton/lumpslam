@@ -271,11 +271,16 @@ function loadProfile(filePath: string): {
   };
 
   // ── Guardrails
+  // Defaults are realistic Guyton-Klinger style: 20% drop from peak → 10% cut on variable spending;
+  // 40% drop → 20% cut (capped); restore baseline when drawdown recovers below 10%. Cuts apply only
+  // to discretionary spending (essential + travel + charitable), NOT to mortgage/healthcare/taxes.
+  // Previous defaults (29%/3%) were too mild to model real retiree behavior. Override per-profile
+  // via the `guardrails:` block if a different policy is desired.
   const g = input.guardrails ?? {};
   const guardrails: GuardrailConfig = {
     upperGuardrailGrowthPct: g.upperGrowthPct ?? 0.20,
-    lowerGuardrailDropPct: g.lowerDropPct ?? 0.29,
-    lowerGuardrailSpendingCutPct: g.lowerCutPct ?? 0.03,
+    lowerGuardrailDropPct: g.lowerDropPct ?? 0.20,
+    lowerGuardrailSpendingCutPct: g.lowerCutPct ?? 0.10,
   };
 
   return { profile, accounts, homeEquity: input.homeEquity ?? 0, spending, guardrails };

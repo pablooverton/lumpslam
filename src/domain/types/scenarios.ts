@@ -4,8 +4,16 @@ export type ScenarioType = 'retire_now' | 'retire_at_stated_date' | 'no_change';
 
 export interface GuardrailConfig {
   upperGuardrailGrowthPct: number;      // portfolio growth % that triggers spending increase
-  lowerGuardrailDropPct: number;        // portfolio drop % that triggers spending cut
-  lowerGuardrailSpendingCutPct: number; // how much to cut spending (e.g. 0.03 = 3%)
+  lowerGuardrailDropPct: number;        // portfolio drop % from peak that triggers spending cut
+  lowerGuardrailSpendingCutPct: number; // how much to cut spending at first tier (e.g. 0.10 = 10%)
+  /** If set, deep drawdowns trigger a second-tier cut. Default: 2× lowerGuardrailDropPct.
+   *  e.g. 0.20 first-tier + 0.40 deep-tier = 10% cut at 20% drop, 20% cut at 40% drop. */
+  deepDropPct?: number;
+  /** Spending cut at deep tier. Default: 2× lowerGuardrailSpendingCutPct, capped at 0.30 (30%). */
+  deepCutPct?: number;
+  /** Drawdown below this threshold restores baseline spending (un-cut). Default: 0.10 (10%).
+   *  Prevents oscillation. Must be < lowerGuardrailDropPct. */
+  recoveryThresholdPct?: number;
 }
 
 export interface ScenarioResult {

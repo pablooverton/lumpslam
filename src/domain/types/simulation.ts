@@ -57,4 +57,8 @@ export interface YearlyProjection {
   estimatedAcaSavings: number;
   irmaaApplies: boolean;
   irmaaSurcharge: number;
+  /** Guardrail state for this year. 0 = baseline spending; >0 = active cut as fraction. */
+  guardrailCutPct: number;
+  /** Maximum portfolio balance seen so far during retirement (peak from which drawdown is measured). */
+  peakPortfolio: number;
 }
