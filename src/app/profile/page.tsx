@@ -38,6 +38,57 @@ export default function ProfilePage() {
     }
   }, [profile, assets, spending]);
 
+  const [prefilledFromFirewhere, setPrefilledFromFirewhere] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('source') !== 'firewhere') return;
+
+    const num = (k: string) => {
+      const v = Number(params.get(k));
+      return Number.isFinite(v) ? v : null;
+    };
+
+    const currentAge = num('currentAge');
+    const currentSavings = num('currentSavings');
+    const annualSavings = num('annualSavings');
+    const currentSpending = num('currentSpending');
+    const realReturn = num('realReturn');
+
+    setForm((f) => ({
+      ...f,
+      client:
+        currentAge != null && currentAge > 0
+          ? { ...f.client, age: currentAge, birthYear: f.currentYear - currentAge }
+          : f.client,
+      accounts: f.accounts.map((a, i) =>
+        i === 0 && currentSavings != null && currentSavings > 0
+          ? { ...a, currentBalance: currentSavings, label: a.label || 'Brokerage' }
+          : a
+      ),
+      annualContributions: {
+        ...f.annualContributions,
+        brokerage:
+          annualSavings != null && annualSavings >= 0
+            ? annualSavings
+            : f.annualContributions.brokerage,
+      },
+      essentialAnnualSpending:
+        currentSpending != null && currentSpending > 0
+          ? currentSpending
+          : f.essentialAnnualSpending,
+      growthScenario: (() => {
+        if (realReturn == null || realReturn <= 0) return f.growthScenario;
+        if (realReturn <= 0.035) return 'pessimistic';
+        if (realReturn <= 0.045) return 'conservative';
+        if (realReturn <= 0.055) return 'moderate';
+        if (realReturn <= 0.065) return 'optimistic';
+        return 'historical';
+      })(),
+    }));
+    setPrefilledFromFirewhere(true);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((f) => ({ ...f, [key]: value }));
   }
@@ -203,6 +254,18 @@ export default function ProfilePage() {
 
   return (
     <div className="max-w-3xl">
+      {prefilledFromFirewhere && (
+        <div className="mb-4 p-3 rounded-lg border border-blue-900 bg-blue-950/30 text-sm text-blue-100">
+          <strong className="text-blue-200">Inputs pre-filled from firewhere.</strong> Adjust as
+          needed for full retirement modeling, then run scenarios.{' '}
+          <a
+            href="https://www.pablooverton.com/firewhere/"
+            className="underline hover:text-blue-200"
+          >
+            ← back to firewhere
+          </a>
+        </div>
+      )}
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold text-white">Profile &amp; Assets</h1>
         <div className="flex items-center gap-2">
