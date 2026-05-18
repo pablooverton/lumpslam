@@ -1,8 +1,9 @@
 // 'international' = pre-Medicare years when retirementLocation=international.
 // 'self_insure'   = pre-Medicare years when healthcareCoverage=self_insure.
-// All three of cobra/international/self_insure share engine rules: no ACA MAGI cliff,
+// 'coast'         = years inside a CoastPhase (Asia-based working bridge before full retirement).
+// All four of cobra/international/self_insure/coast share engine rules: no ACA MAGI cliff,
 // free conversions, healthcare cost handled outside the ACA-subsidy framework.
-export type RetirementSeason = 'cobra' | 'aca' | 'medicare' | 'rmd' | 'international' | 'self_insure';
+export type RetirementSeason = 'cobra' | 'aca' | 'medicare' | 'rmd' | 'international' | 'self_insure' | 'coast';
 
 export interface IncomeBreakdown {
   socialSecurityClient: number;
@@ -27,6 +28,10 @@ export interface TaxLiability {
   totalFederalTax: number;
   stateTax: number;       // top-marginal-rate applied to non-SS income; approximation for planning
   effectiveRate: number;
+  /** Foreign tax owed during a Coast or international phase. Defaults to 0 for US-domestic years. */
+  foreignTax?: number;
+  /** US Foreign Tax Credit applied against US federal income tax. Equals foreignTax (simplified FTC). */
+  foreignTaxCredit?: number;
 }
 
 export interface RothConversionEvent {

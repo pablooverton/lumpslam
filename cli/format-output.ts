@@ -117,6 +117,7 @@ const SEASON_LABEL: Record<RetirementSeason, string> = {
   rmd:           'RMD Era ',
   international: 'Intl    ',
   self_insure:   'SelfIns ',
+  coast:         'Coast   ',
 };
 
 const SEASON_COLOR: Record<RetirementSeason, string> = {
@@ -126,6 +127,7 @@ const SEASON_COLOR: Record<RetirementSeason, string> = {
   rmd:           '\x1b[33m', // yellow
   international: '\x1b[95m', // bright magenta
   self_insure:   '\x1b[92m', // bright green
+  coast:         '\x1b[96m', // bright cyan
 };
 
 export function printSeasons(projections: YearlyProjection[], years = 30): void {

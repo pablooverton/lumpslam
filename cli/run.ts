@@ -23,10 +23,11 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { deriveAssetTotals } from '../src/domain/types/assets';
-import type { ClientProfile, PersonProfile, AnnualContributions } from '../src/domain/types/profile';
+import type { ClientProfile, PersonProfile, AnnualContributions, CoastPhase } from '../src/domain/types/profile';
 import type { Account } from '../src/domain/types/assets';
 import type { SpendingProfile, OneTimeExpense } from '../src/domain/types/spending';
 import type { GuardrailConfig } from '../src/domain/types/scenarios';
+import type { ForeignTaxRegime, ConversionTreatyProtection } from '../src/domain/types/foreign-tax';
 import { runSimulation } from '../src/domain/engine/simulation-runner';
 import { runMonteCarlo, type MonteCarloConfig } from '../src/domain/engine/monte-carlo';
 import { buildSocialSecurityComparison } from '../src/domain/engine/social-security';
@@ -56,6 +57,28 @@ interface PersonInput {
   /** Monthly SS benefit if claimed exactly at fullRetirementAge. Find at ssa.gov/myaccount */
   fraMonthlyBenefit: number;
   socialSecurityClaimAge: number;
+}
+
+interface CoastPhaseInput {
+  /** First year of phase (inclusive). Must be > currentYear. */
+  startYear: number;
+  /** Last year of phase (inclusive). Must be < retirementYear. */
+  endYear: number;
+  location: 'japan' | 'korea' | 'taiwan';
+  taxRegime: ForeignTaxRegime;
+  /** Combined household income during phase (real USD). */
+  annualIncome: number;
+  /** Fraction of annualIncome that is US-source (US remote pay). Range [0, 1]. */
+  usSourceIncomePct: number;
+  annualConversion?: number;
+  annualRemittanceToHost?: number;
+  /** REQUIRED: 'protected' | 'half_taxed' | 'fully_taxed'. No default. */
+  conversionTreatyProtection: ConversionTreatyProtection;
+  /** Taiwan AMT only. Default '100pct'. */
+  taiwanAmtInclusionMode?: '100pct' | '50pct';
+  /** If true, Coast surplus (income - tax - expenses) → taxable brokerage with 100% basis.
+   *  Default false. Recommended true for realistic Coast scenarios. */
+  routeSurplusToBrokerage?: boolean;
 }
 
 interface AccountInput {
@@ -147,6 +170,10 @@ interface ProfileInput {
     brokerage: number;
     hsa?: number;
   };
+  /** Coast FIRE phases: working-bridge years in Asia between accumulation and full retirement.
+   *  Multiple phases supported; must be chronologically ordered, non-overlapping, contiguous,
+   *  all between currentYear and retirementYear. See engine docs for full validation rules. */
+  coastPhases?: CoastPhaseInput[];
   accounts: AccountInput[];
   /** Home equity — non-liquid, for reference only */
   homeEquity?: number;
@@ -220,6 +247,7 @@ function loadProfile(filePath: string): {
     targetBracket: input.targetBracket,
     spendingEngine: input.spendingEngine,
     annualContributions,
+    coastPhases: input.coastPhases as CoastPhase[] | undefined,
   };
 
   // ── Accounts

@@ -1,3 +1,5 @@
+import type { ForeignTaxRegime, ConversionTreatyProtection } from './foreign-tax';
+
 export interface PersonProfile {
   name: string;
   age: number;
@@ -6,6 +8,128 @@ export interface PersonProfile {
   fullRetirementAge: number;
   fraMonthlyBenefit: number; // estimated SS benefit at FRA, in today's dollars
   socialSecurityClaimAge: number;
+}
+
+// ─── CoastPhase ──────────────────────────────────────────────────────────────
+//
+// A multi-year Coast FIRE phase between accumulation and full retirement, where
+// the household lives abroad and earns reduced income. Multiple phases may be
+// chained (e.g., Taiwan 3 years → Korea 2 years → retire). Phases must be
+// chronologically ordered, non-overlapping, and contiguous; the first phase
+// must start at or after currentYear+1 and the last must end before
+// retirementYearDesired.
+//
+// During Coast: portfolio does not receive contributions, but compounds normally.
+// Coast income offsets living expenses; any deficit draws from brokerage/Roth.
+// Roth conversions during Coast are optional and contribute to MAGI.
+// Foreign tax is computed per phase via the foreign-tax engine.
+
+export interface CoastPhase {
+  /** First year of this phase (inclusive). */
+  startYear: number;
+  /** Last year of this phase (inclusive). */
+  endYear: number;
+  /** Country of residence during this phase — drives healthcare regime defaults. */
+  location: 'japan' | 'korea' | 'taiwan';
+  /** Foreign tax regime during this phase. Must align semantically with location
+   *  (e.g., 'japan_npr' or 'japan_full' for location='japan'). */
+  taxRegime: ForeignTaxRegime;
+  /** Combined household annual income during this phase (real USD). */
+  annualIncome: number;
+  /** Fraction of annualIncome that is US-source (US remote work paid to US accounts).
+   *  Range [0, 1]. E.g., 0.6 = 60% primary earner US remote, 40% spouse local pharma. */
+  usSourceIncomePct: number;
+  /** Annual Roth conversion during this phase (real USD). Optional; default 0. */
+  annualConversion?: number;
+  /** Annual remittance from US accounts to host country (for living expenses funded from
+   *  taxable brokerage rather than coast income). Drives 'remitted to host' rules. Default 0. */
+  annualRemittanceToHost?: number;
+  /** REQUIRED treaty interpretation for Roth conversions during this phase.
+   *  Engine has no default — the user must declare an explicit assumption per phase. */
+  conversionTreatyProtection: ConversionTreatyProtection;
+  /** For Taiwan AMT regime only: inclusion rate above NT$1M threshold.
+   *  - '100pct' (default in engine): conservative; matches most authoritative sources
+   *  - '50pct': optimistic; matches vault's original Taiwan analysis. Sensitivity-test only.
+   *  Ignored for non-Taiwan regimes. */
+  taiwanAmtInclusionMode?: '100pct' | '50pct';
+  /** If true, any Coast surplus (income - tax - expenses) flows to taxable brokerage
+   *  with 100% cost basis. Default false (surplus treated as cash; not modeled).
+   *  Recommended true for realistic Coast scenarios where the household saves the surplus.
+   *  Affects portfolio compounding and retirement-phase starting balance. */
+  routeSurplusToBrokerage?: boolean;
+}
+
+/** Result of validating a CoastPhase[] against profile constraints. */
+export interface CoastPhasesValidationResult {
+  valid: boolean;
+  errors: string[];
+}
+
+/** Validate that an array of CoastPhase is well-formed and consistent with the profile.
+ *  Returns a result with errors; caller decides whether to throw or surface to UI. */
+export function validateCoastPhases(
+  phases: CoastPhase[] | undefined,
+  currentYear: number,
+  retirementYearDesired: number | null
+): CoastPhasesValidationResult {
+  const errors: string[] = [];
+  if (!phases || phases.length === 0) {
+    return { valid: true, errors: [] };
+  }
+  if (retirementYearDesired == null) {
+    errors.push('coastPhases requires retirementYearDesired to be set on the profile.');
+    return { valid: false, errors };
+  }
+
+  // Per-phase validation
+  for (let i = 0; i < phases.length; i++) {
+    const p = phases[i];
+    if (p.startYear > p.endYear) {
+      errors.push(`Phase ${i}: startYear (${p.startYear}) > endYear (${p.endYear}).`);
+    }
+    if (p.startYear <= currentYear) {
+      errors.push(`Phase ${i}: startYear (${p.startYear}) must be after currentYear (${currentYear}).`);
+    }
+    if (p.endYear >= retirementYearDesired) {
+      errors.push(`Phase ${i}: endYear (${p.endYear}) must be before retirementYearDesired (${retirementYearDesired}).`);
+    }
+    if (p.usSourceIncomePct < 0 || p.usSourceIncomePct > 1) {
+      errors.push(`Phase ${i}: usSourceIncomePct (${p.usSourceIncomePct}) must be in [0, 1].`);
+    }
+    if (p.annualIncome < 0) {
+      errors.push(`Phase ${i}: annualIncome (${p.annualIncome}) must be non-negative.`);
+    }
+    if (p.annualConversion != null && p.annualConversion < 0) {
+      errors.push(`Phase ${i}: annualConversion must be non-negative.`);
+    }
+    if (p.annualRemittanceToHost != null && p.annualRemittanceToHost < 0) {
+      errors.push(`Phase ${i}: annualRemittanceToHost must be non-negative.`);
+    }
+    // Regime/location consistency (soft check — warn-style)
+    if (p.location === 'japan' && p.taxRegime !== 'japan_npr' && p.taxRegime !== 'japan_full') {
+      errors.push(`Phase ${i}: location='japan' but taxRegime='${p.taxRegime}' (expected japan_npr or japan_full).`);
+    }
+    if (p.location === 'korea' && p.taxRegime !== 'korea_under5' && p.taxRegime !== 'korea_over5') {
+      errors.push(`Phase ${i}: location='korea' but taxRegime='${p.taxRegime}' (expected korea_under5 or korea_over5).`);
+    }
+    if (p.location === 'taiwan' && p.taxRegime !== 'taiwan_amt') {
+      errors.push(`Phase ${i}: location='taiwan' but taxRegime='${p.taxRegime}' (expected taiwan_amt).`);
+    }
+  }
+
+  // Cross-phase ordering and contiguity
+  for (let i = 1; i < phases.length; i++) {
+    const prev = phases[i - 1];
+    const curr = phases[i];
+    if (curr.startYear <= prev.endYear) {
+      errors.push(`Phases ${i - 1} and ${i} overlap: phase ${i - 1} ends ${prev.endYear}, phase ${i} starts ${curr.startYear}.`);
+    }
+    if (curr.startYear !== prev.endYear + 1) {
+      errors.push(`Phases ${i - 1} and ${i} are not contiguous: phase ${i - 1} ends ${prev.endYear}, phase ${i} starts ${curr.startYear}. Engine requires contiguous phases.`);
+    }
+  }
+
+  return { valid: errors.length === 0, errors };
 }
 
 export interface AnnualContributions {
@@ -107,4 +231,15 @@ export interface ClientProfile {
   // Rule-based allocation of free cash flow; the engine resolves this into per-year
   // contributions with proper gross-up for pre-tax buckets. See SavingsStrategy above.
   savingsStrategy?: SavingsStrategy;
+  /**
+   * Optional Coast FIRE phases between accumulation and full retirement.
+   * Multiple phases supported for multi-country sequences (e.g., Taiwan → Korea).
+   * Validation rules enforced by validateCoastPhases():
+   *   - Each phase: startYear after currentYear, endYear before retirementYearDesired
+   *   - Phases ordered chronologically
+   *   - Phases contiguous (no gaps)
+   *   - Tax regime aligns with location
+   * If omitted, engine behaves identically to pre-Coast-FIRE implementation.
+   */
+  coastPhases?: CoastPhase[];
 }

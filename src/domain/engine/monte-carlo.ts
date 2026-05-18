@@ -101,17 +101,29 @@ export function runMonteCarlo(
       profile.spouse ? profile.spouse.lifeExpectancy - profile.spouse.age : 0
     );
 
+  // Tracked year range: first Coast phase start (if any) through endYear.
+  // Without Coast, this equals retirementYear..endYear (pre-Coast behavior).
+  // With Coast, tracked years include Coast years before retirementYear so the band
+  // visualization shows the full Asia-bridge timeline.
+  const firstSimYear = profile.coastPhases && profile.coastPhases.length > 0
+    ? profile.coastPhases[0].startYear
+    : retirementYear;
+  const totalSimYears = Math.max(1, endYear - firstSimYear + 1);
+  // returnSequence is per retirement year only (Coast uses flat growthRate per simulation-runner).
+  // So we still size returnSequence to retirementYears, not totalSimYears.
   const retirementYears = Math.max(1, endYear - retirementYear + 1);
 
   // Collect per-year and final-portfolio outcomes across all trials
   const finalPortfolios: number[] = [];
   let successCount = 0;
 
-  // portfoliosByYear[yearIndex] = array of portfolio values across trials
-  const portfoliosByYear: number[][] = Array.from({ length: retirementYears }, () => []);
+  // portfoliosByYear[yearOffset] = array of portfolio values across trials, where
+  // yearOffset = proj.year - firstSimYear. Sized for totalSimYears to cover Coast + retirement.
+  const portfoliosByYear: number[][] = Array.from({ length: totalSimYears }, () => []);
 
   for (let sim = 0; sim < config.simulations; sim++) {
-    // Generate a unique return sequence for this trial
+    // Generate a unique return sequence for this trial. Sized for retirement only;
+    // Coast years use the deterministic growth rate (Coast is a known-income period).
     const returnSequence = Array.from({ length: retirementYears }, () =>
       sampleReturn(config.meanRealReturn, config.stdDevReturn)
     );
@@ -120,10 +132,11 @@ export function runMonteCarlo(
       profile, assets, spending, guardrails, scenarioType, returnSequence
     );
 
-    // Collect year-by-year portfolio values
-    result.yearlyProjections.forEach((proj, i) => {
-      if (i < retirementYears) {
-        portfoliosByYear[i].push(proj.portfolioEndBalance);
+    // Collect year-by-year portfolio values, indexed by year offset from firstSimYear
+    result.yearlyProjections.forEach((proj) => {
+      const offset = proj.year - firstSimYear;
+      if (offset >= 0 && offset < totalSimYears) {
+        portfoliosByYear[offset].push(proj.portfolioEndBalance);
       }
     });
 
@@ -136,6 +149,8 @@ export function runMonteCarlo(
     // positive forever — that's a failure disguised as success.
     // Instead: if the minimum balance across ALL years drops below $10k,
     // count it as depleted (effectively $0 on a multi-million scale).
+    // NOTE: Coast years are included in this check, which is correct — if the portfolio
+    // depletes during Coast, that's still a failure.
     const DEPLETION_FLOOR = 10_000;
     const minBalance = Math.min(...result.yearlyProjections.map(p => p.portfolioEndBalance));
     if (minBalance > DEPLETION_FLOOR) successCount++;
@@ -144,12 +159,12 @@ export function runMonteCarlo(
   // Sort final portfolios for percentiles
   finalPortfolios.sort((a, b) => a - b);
 
-  // Build per-year percentile bands
+  // Build per-year percentile bands. Index i represents year (firstSimYear + i).
   const portfolioBands: PercentileBand[] = portfoliosByYear
     .map((yearValues, i) => {
       if (yearValues.length === 0) return null;
       yearValues.sort((a, b) => a - b);
-      const year = retirementYear + i;
+      const year = firstSimYear + i;
       const clientAge = profile.client.age + (year - profile.currentYear);
       return {
         year,

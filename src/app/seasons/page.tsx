@@ -15,6 +15,7 @@ const SEASON_LABELS: Record<RetirementSeason, string> = {
   rmd: 'RMD Era',
   international: 'International',
   self_insure: 'Self-Insure',
+  coast: 'Coast FIRE',
 };
 
 const SEASON_COLORS: Record<RetirementSeason, string> = {
@@ -24,6 +25,7 @@ const SEASON_COLORS: Record<RetirementSeason, string> = {
   rmd:           'border-orange-600 bg-orange-950',
   international: 'border-violet-600 bg-violet-950',
   self_insure:   'border-emerald-600 bg-emerald-950',
+  coast:         'border-cyan-600   bg-cyan-950',
 };
 
 const SEASON_TEXT: Record<RetirementSeason, string> = {
@@ -33,6 +35,7 @@ const SEASON_TEXT: Record<RetirementSeason, string> = {
   rmd:           'text-orange-400',
   international: 'text-violet-400',
   self_insure:   'text-emerald-400',
+  coast:         'text-cyan-400',
 };
 
 // ── Phase summary helper ────────────────────────────────────────────────────

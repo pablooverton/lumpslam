@@ -1,4 +1,5 @@
 import type { ClientProfile } from '../types/profile';
+import { validateCoastPhases } from '../types/profile';
 import type { AssetSnapshot } from '../types/assets';
 import type { SpendingProfile } from '../types/spending';
 import type { GuardrailConfig, LifetimeAggregates, ScenarioResult, ScenarioType, StrategyTotalsSummary } from '../types/scenarios';
@@ -10,6 +11,7 @@ import { calculateBenefitAtClaimAge } from './social-security';
 import { calculateOrdinaryIncomeTax, getMarginalRate } from './tax-utils';
 import { calculateSpendingCapacity } from './spending-capacity';
 import { resolveSavingsStrategy, aggregateStrategyTotals, type ResolvedYearAllocation } from './savings-strategy';
+import { runCoastStep, type CoastStepState } from './coast';
 import { FEDERAL_INCOME_TAX_BRACKETS_2025, STANDARD_DEDUCTION_2025, getBracketCeiling } from '../constants/tax-brackets';
 import { getAcaCliff } from '../constants/aca-thresholds';
 import { RMD_START_AGE } from '../constants/rmd-tables';
@@ -60,6 +62,22 @@ export function runSimulation(
   const yearsInRetirement = endYear - retirementYear;
   const workingYears = Math.max(0, retirementYear - profile.currentYear);
 
+  // ─── Coast phase validation & accumulation truncation ───────────────────
+  // If profile.coastPhases is set, accumulation stops at the first coast phase start year
+  // (rather than running all the way to retirementYear). Validation runs first to surface
+  // configuration errors before any simulation work.
+  const coastValidation = validateCoastPhases(profile.coastPhases, profile.currentYear, profile.retirementYearDesired ?? null);
+  if (!coastValidation.valid) {
+    throw new Error(
+      `Invalid coastPhases configuration: ${coastValidation.errors.join('; ')}`
+    );
+  }
+  const hasCoast = (profile.coastPhases?.length ?? 0) > 0;
+  const firstCoastYear = hasCoast ? profile.coastPhases![0].startYear : null;
+  const accumulationYears = firstCoastYear != null
+    ? Math.max(0, firstCoastYear - profile.currentYear)
+    : workingYears;
+
   // Accumulation phase: grow balances year-by-year, adding annual contributions each year.
   // This models the reality of ongoing 401k/Roth/brokerage deposits during working years.
   // Without contributions, the engine only compounds current balances — understating retirement assets.
@@ -82,16 +100,17 @@ export function runSimulation(
   const workingYearConversionTaxByYear: number[] = [];
 
   // Resolved per-year allocations — populated only when savingsStrategy is set.
+  // Resolved over accumulationYears (which equals workingYears when no coast phases).
   let resolvedAllocations: ResolvedYearAllocation[] | null = null;
   if (profile.savingsStrategy) {
     resolvedAllocations = resolveSavingsStrategy(
       profile.savingsStrategy,
       profile.currentYear,
-      workingYears,
+      accumulationYears,
     );
   }
 
-  for (let y = 0; y < workingYears; y++) {
+  for (let y = 0; y < accumulationYears; y++) {
     let addPretax = 0;
     let addRoth = 0;
     let addBrokerage = 0;
@@ -139,6 +158,60 @@ export function runSimulation(
     hsaBalance          = hsaBalance          * (1 + growthRate);
 
     workingYearConversionTaxByYear.push(wyConversionTax);
+  }
+
+  // ─── Coast phase loop ──────────────────────────────────────────────────
+  // Runs between accumulation and retirement. Coast phases (if any) modify the
+  // post-accumulation balances and produce YearlyProjection entries with season='coast'.
+  // The retirement loop afterward sees the post-coast balances via projectedAssets.
+  const coastProjections: YearlyProjection[] = [];
+  if (hasCoast) {
+    // Brokerage gain ratio computed against current accumulation-end balance.
+    // This treats the basis as a fixed dollar amount (set at simulation entry) that
+    // is allocated proportionally across the basis ratio of the brokerage balance.
+    const totalBrokerageBasisCoast = assets.accounts
+      .filter((a) => a.type === 'brokerage')
+      .reduce((sum, a) => sum + (a.costBasis ?? a.currentBalance), 0);
+    const brokerageGainRatioCoast =
+      brokerageBalance > 0
+        ? Math.max(0, Math.min(1, (brokerageBalance - totalBrokerageBasisCoast) / brokerageBalance))
+        : 0;
+
+    const coastState: CoastStepState = {
+      pretaxBalance,
+      rothBalance,
+      brokerageBalance,
+      inheritedIraBalance,
+      hsaBalance,
+      peakPortfolio: 0,
+      brokerageCostBasis: totalBrokerageBasisCoast,
+    };
+
+    for (const phase of profile.coastPhases!) {
+      for (let coastYear = phase.startYear; coastYear <= phase.endYear; coastYear++) {
+        // Recompute gain ratio each year since cost basis changes when surplus is routed
+        const liveGainRatio = coastState.brokerageBalance > 0
+          ? Math.max(0, Math.min(1, (coastState.brokerageBalance - coastState.brokerageCostBasis) / coastState.brokerageBalance))
+          : 0;
+        const projection = runCoastStep({
+          year: coastYear,
+          phase,
+          profile,
+          spending,
+          growthRate,
+          state: coastState,
+          brokerageGainRatio: liveGainRatio,
+        });
+        coastProjections.push(projection);
+      }
+    }
+
+    // Sync coast-mutated balances back to outer-scope variables so projectedAssets reflects post-coast state
+    pretaxBalance = coastState.pretaxBalance;
+    rothBalance = coastState.rothBalance;
+    brokerageBalance = coastState.brokerageBalance;
+    inheritedIraBalance = coastState.inheritedIraBalance;
+    hsaBalance = coastState.hsaBalance;
   }
 
   const clientSSMonthly = calculateBenefitAtClaimAge(
@@ -212,6 +285,11 @@ export function runSimulation(
   const desiredSpending =
     spending.baseAnnualSpending + realMortgageAtRetirement + realHealthcareAtRetirement;
   const yearlyProjections: YearlyProjection[] = [];
+  // Prepend Coast phase projections (if any) so downstream analytics (lifetime aggregates,
+  // depletion checks, etc.) see them as part of the simulation timeline.
+  if (coastProjections.length > 0) {
+    yearlyProjections.push(...coastProjections);
+  }
   const stdDeduction = STANDARD_DEDUCTION_2025[profile.filingStatus];
 
   // ─── Heuristic bridge context ──────────────────────────────────────────────
