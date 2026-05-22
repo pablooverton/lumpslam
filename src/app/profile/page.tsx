@@ -23,6 +23,36 @@ import {
   selectClass,
 } from './_components';
 
+const FIREWHERE_BASE = 'https://www.pablooverton.com/firewhere/';
+
+function growthScenarioToRealReturn(g: FormState['growthScenario']): number {
+  switch (g) {
+    case 'pessimistic':  return 0.03;
+    case 'conservative': return 0.04;
+    case 'moderate':     return 0.05;
+    case 'optimistic':   return 0.06;
+    case 'historical':   return 0.07;
+  }
+}
+
+function buildFirewhereURL(form: FormState): string {
+  const totalSavings = form.accounts.reduce((sum, a) => sum + (a.currentBalance ?? 0), 0);
+  const annualSavings =
+    form.annualContributions.pretax +
+    form.annualContributions.roth +
+    form.annualContributions.brokerage +
+    form.annualContributions.hsa;
+  const params = new URLSearchParams({
+    source: 'lumpslam',
+    currentAge: String(form.client.age),
+    currentSavings: String(totalSavings),
+    annualSavings: String(annualSavings),
+    currentSpending: String(form.essentialAnnualSpending),
+    realReturn: String(growthScenarioToRealReturn(form.growthScenario)),
+  });
+  return `${FIREWHERE_BASE}?${params.toString()}`;
+}
+
 export default function ProfilePage() {
   const { setProfile, setAssets, setSpending, profile, assets, spending } = useProfileStore();
   const { runSimulations, markStale } = useSimulationStore();
@@ -405,6 +435,19 @@ export default function ProfilePage() {
                   <p className="text-gray-500">
                     <span className="text-yellow-600 font-medium">What this tool doesn&apos;t model:</span> Foreign tax credits (taxes paid abroad can offset your US bill — actual liability may be lower), and state taxes (if you formally change domicile, you may owe nothing to your prior state). Tax treaty details are country-specific and beyond scope here — consult a cross-border tax advisor for those.
                   </p>
+                  <div className="pt-1">
+                    <a
+                      href={buildFirewhereURL(form)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-blue-700 bg-blue-950/40 text-blue-200 text-xs font-medium hover:border-blue-500 hover:bg-blue-950/60 transition-colors"
+                    >
+                      Compare 57 countries in firewhere <span aria-hidden="true">↗</span>
+                    </a>
+                    <p className="mt-1.5 text-gray-500 text-[11px]">
+                      firewhere ranks countries by FIRE breakeven with localized cost-of-living, healthcare, and tax (progressive brackets for 10 top destinations). Inputs from this page will be pre-filled.
+                    </p>
+                  </div>
                 </div>
               )}
             </div>
