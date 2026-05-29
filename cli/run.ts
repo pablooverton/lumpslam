@@ -136,6 +136,10 @@ interface ProfileInput {
   spouse?: PersonInput | null;
   /** Two-letter state abbreviation, e.g. "TX" */
   state: string;
+  /** Explicit override for whether the household owes state income tax. Use `false` to model
+   *  severed US-state residency (e.g. living abroad in Korea/Japan) while keeping `state` set to
+   *  the last US domicile for reference. When omitted, derived from the state's tax status. */
+  hasStateIncomeTax?: boolean;
   /** "married_filing_jointly" | "single". Inferred from spouse presence if omitted. */
   filingStatus?: 'married_filing_jointly' | 'single';
   currentYear: number;
@@ -237,7 +241,10 @@ function loadProfile(filePath: string): {
       input.filingStatus ??
       (input.spouse ? 'married_filing_jointly' : 'single'),
     stateOfResidence: input.state,
-    hasStateIncomeTax: stateInfo?.hasIncomeTax ?? true,
+    // Honor an explicit profile override first (false = severed residency / living abroad);
+    // otherwise derive from the state's tax status. Previously this ignored the profile field
+    // entirely, so severed-residency profiles silently kept their home state's tax rate.
+    hasStateIncomeTax: input.hasStateIncomeTax ?? (stateInfo?.hasIncomeTax ?? true),
     currentYear: input.currentYear,
     retirementYearDesired: input.retirementYear,
     cobraMonths: input.cobraMonths ?? 18,

@@ -538,6 +538,15 @@ export function runSimulation(
       const totalTax = calculateOrdinaryIncomeTax(taxableIncome, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025);
       const marginalRate = getMarginalRate(taxableIncome, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025);
 
+      // State income tax on the conversion (non-SS ordinary income at the state top marginal rate).
+      // BUG FIX 2026-05-28: this was previously computed only for the report object (~25 lines below)
+      // and NEVER funded from the portfolio, so any state-tax profile (e.g. NC base case) effectively
+      // simulated as if it paid $0 state tax. It must be drawn from Roth alongside federal tax.
+      // stateRate is 0 unless the profile sets hasStateIncomeTax + stateOfResidence, so this is a
+      // no-op for severed-residency scenarios (Korea/international keep stateRate 0).
+      const stateTaxBase = Math.max(0, magiBase - ssIncludable);
+      const stateTax = stateTaxBase * stateRate;
+
       // T6: lumpy expenses (e.g. rebuy a house) draw from brokerage first, Roth as overflow.
       // Recurring spending (annualSpending minus oneTimeExpense) still funds from Roth net of SS.
       const recurringSpending = Math.max(0, annualSpending - oneTimeExpense);
@@ -552,7 +561,7 @@ export function runSimulation(
       // Bug fix 2026-05-15: prior code only had Tier 2 — when both Roth AND pretax were depleted
       // but brokerage had money, the engine silently failed to draw any spending. This made
       // extreme early-retirement scenarios appear feasible by phantom-zero-spending years.
-      const totalRothNeed = totalTax + rothSpendingDraw;
+      const totalRothNeed = totalTax + stateTax + rothSpendingDraw;
       const rothAvailable = rothBalance + conversionAmount;
       let unfundedFromRoth = Math.max(0, totalRothNeed - rothAvailable);
 
@@ -571,7 +580,7 @@ export function runSimulation(
         marginalRate,
         taxOnConversion: totalTax,
         brokerageFundingAmount: 0,
-        rothFundingAmount: totalTax, // taxes paid from Roth
+        rothFundingAmount: totalTax + stateTax, // federal + state taxes paid from Roth
       };
 
       withdrawals = {
@@ -585,8 +594,8 @@ export function runSimulation(
       const portfolioStart = pretaxBalance + rothBalance + brokerageBalance + inheritedIraBalance + hsaBalance;
 
       pretaxBalance = Math.max(0, pretaxBalance - rmd - emergencyPretaxDraw - conversionAmount);
-      // Roth: gains conversion, pays taxes and spending
-      rothBalance = Math.max(0, rothBalance + conversionAmount - totalTax - rothSpendingDraw);
+      // Roth: gains conversion, pays taxes (federal + state) and spending
+      rothBalance = Math.max(0, rothBalance + conversionAmount - totalTax - stateTax - rothSpendingDraw);
       // T6: brokerage funds the lumpy expense; Tier-3 fallback also draws from brokerage when
       // Roth + pretax cannot cover annual spending.
       brokerageBalance = Math.max(0, brokerageBalance - lumpyFromBrokerage - emergencyBrokerageDraw);
@@ -608,9 +617,7 @@ export function runSimulation(
           ? calculateIrmaaSurcharge(getLookbackMagi(magi), profile.filingStatus)
           : 0;
 
-      // State tax: most states don't tax SS; applied to non-SS income at top marginal rate
-      const stateTaxBase = Math.max(0, magi - totalSSAnnual * 0.85);
-      const stateTax = stateTaxBase * stateRate;
+      // State tax (stateTaxBase/stateTax computed above, where it is also funded from Roth).
       const taxLiability: TaxLiability = {
         ordinaryIncomeTax: 0, // all tax is on the conversion
         capitalGainsTax: 0,
@@ -746,6 +753,8 @@ export function runSimulation(
       );
       const rothConversionTax = rothConversion?.taxOnConversion ?? 0;
 
+      // State income tax on non-SS ordinary income at the state top marginal rate. stateRate is 0
+      // unless the profile is state-taxed, so this is a no-op for severed-residency profiles.
       const stateTaxBase = Math.max(0, magi - totalSSAnnual * 0.85);
       const stateTax = stateTaxBase * stateRate;
       const taxLiability: TaxLiability = {
@@ -765,13 +774,33 @@ export function runSimulation(
       const portfolioStart =
         pretaxBalance + rothBalance + brokerageBalance + inheritedIraBalance + hsaBalance;
 
+      // BUG FIX 2026-05-29 (companion to the conversion-primary fix): fund state income tax from the
+      // portfolio. Previously stateTax was reported in taxLiability but never deducted, so any
+      // state-taxed profile using this branch understated its drag. Pay from Roth first
+      // (MAGI-invisible, no tax-on-tax spiral), then brokerage, then pretax — computed against the
+      // post-withdrawal, post-conversion balances so it never double-counts a draw.
+      const rothAfter = Math.max(0,
+        rothBalance - withdrawals.fromRoth
+          + (rothConversion?.conversionAmount ?? 0)
+          - (rothConversion?.rothFundingAmount ?? 0));
+      const brokerageAfter = Math.max(0,
+        brokerageBalance - withdrawals.fromBrokerage - (rothConversion?.brokerageFundingAmount ?? 0));
+      const pretaxAfter = Math.max(0,
+        pretaxBalance - withdrawals.fromPretax - (rothConversion?.conversionAmount ?? 0));
+      let stateTaxRemaining = stateTax;
+      const stateTaxFromRoth = Math.min(rothAfter, stateTaxRemaining);
+      stateTaxRemaining -= stateTaxFromRoth;
+      const stateTaxFromBrokerage = Math.min(brokerageAfter, stateTaxRemaining);
+      stateTaxRemaining -= stateTaxFromBrokerage;
+      const stateTaxFromPretax = Math.min(pretaxAfter, stateTaxRemaining);
+
       pretaxBalance = Math.max(
         0,
-        pretaxBalance - withdrawals.fromPretax - (rothConversion?.conversionAmount ?? 0)
+        pretaxBalance - withdrawals.fromPretax - (rothConversion?.conversionAmount ?? 0) - stateTaxFromPretax
       );
       brokerageBalance = Math.max(
         0,
-        brokerageBalance - withdrawals.fromBrokerage - (rothConversion?.brokerageFundingAmount ?? 0)
+        brokerageBalance - withdrawals.fromBrokerage - (rothConversion?.brokerageFundingAmount ?? 0) - stateTaxFromBrokerage
       );
       rothBalance = Math.max(
         0,
@@ -779,6 +808,7 @@ export function runSimulation(
           - withdrawals.fromRoth
           + (rothConversion?.conversionAmount ?? 0)
           - (rothConversion?.rothFundingAmount ?? 0)
+          - stateTaxFromRoth
       );
       inheritedIraBalance = Math.max(0, inheritedIraBalance - inheritedDist);
       hsaBalance = Math.max(0, hsaBalance - fromHsa);
