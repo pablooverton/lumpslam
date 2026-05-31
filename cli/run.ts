@@ -64,16 +64,24 @@ interface CoastPhaseInput {
   startYear: number;
   /** Last year of phase (inclusive). Must be < retirementYear. */
   endYear: number;
-  location: 'japan' | 'korea' | 'taiwan';
-  taxRegime: ForeignTaxRegime;
+  /** 'us' = domestic semi-retirement coast (stay in US, reduced income, ACA, US state tax).
+   *  Foreign values drive the foreign-tax regime. */
+  location: 'japan' | 'korea' | 'taiwan' | 'us';
+  /** Foreign coast only; omit for 'us'. */
+  taxRegime?: ForeignTaxRegime;
   /** Combined household income during phase (real USD). */
   annualIncome: number;
-  /** Fraction of annualIncome that is US-source (US remote pay). Range [0, 1]. */
+  /** Fraction of annualIncome that is US-source (US remote pay). Range [0, 1]. Ignored for 'us'. */
   usSourceIncomePct: number;
+  /** US coast: omit to auto-fill conversions up to profile.targetBracket above the coast salary.
+   *  Set a number to convert exactly that amount. */
   annualConversion?: number;
   annualRemittanceToHost?: number;
-  /** REQUIRED: 'protected' | 'half_taxed' | 'fully_taxed'. No default. */
-  conversionTreatyProtection: ConversionTreatyProtection;
+  /** Foreign coast only: 'protected' | 'half_taxed' | 'fully_taxed'. Omit for 'us'. */
+  conversionTreatyProtection?: ConversionTreatyProtection;
+  /** US coast only: people on the ACA plan this phase (drives the cliff). Falls back to
+   *  profile.acaHouseholdSize, then 2. */
+  acaHouseholdSize?: number;
   /** Taiwan AMT only. Default '100pct'. */
   taiwanAmtInclusionMode?: '100pct' | '50pct';
   /** If true, Coast surplus (income - tax - expenses) → taxable brokerage with 100% basis.

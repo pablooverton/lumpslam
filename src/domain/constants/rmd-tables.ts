@@ -7,5 +7,14 @@ export const RMD_UNIFORM_LIFETIME_TABLE: Record<number, number> = {
   90: 12.2, 91: 11.5, 92: 10.8, 93: 10.1, 94: 9.5,  95: 8.9,
 };
 
-// RMD start age per SECURE Act 2.0
+// RMD start age per SECURE Act 2.0. Legacy default; prefer getRmdStartAge(birthYear).
 export const RMD_START_AGE = 73;
+
+// RMD start age per SECURE Act 2.0, by birth year:
+//   born 1951–1959 → 73; born 1960 or later → 75. (Pre-1951 → 72; earlier 70.5 not modeled.)
+// Deriving from birth year fixes a latent bug: the flat 73 under-aged RMDs for anyone born ≥1960.
+export function getRmdStartAge(birthYear: number): number {
+  if (birthYear >= 1960) return 75;
+  if (birthYear >= 1951) return 73;
+  return 72;
+}

@@ -2,7 +2,7 @@ import type { ClientProfile } from '../types/profile';
 import type { RetirementSeason } from '../types/simulation';
 import { getAcaCliff, ACA_ESTIMATED_ANNUAL_SAVINGS_COUPLE } from '../constants/aca-thresholds';
 import { IRMAA_BRACKETS_2025 } from '../constants/tax-brackets';
-import { RMD_START_AGE } from '../constants/rmd-tables';
+import { getRmdStartAge } from '../constants/rmd-tables';
 
 export function getCobraWindowEnd(retirementYear: number, cobraMonths = 12): number {
   // Cobra ends partway through the year; we model it as ending at end of retirementYear + 1
@@ -18,13 +18,14 @@ export function classifySeasonForYear(
   const clientAge = profile.currentYear
     ? profile.client.age + (year - profile.currentYear)
     : profile.client.age;
+  const rmdStartAge = getRmdStartAge(profile.client.birthYear);
 
   // International retirement: no ACA season. Pre-Medicare years use the same engine rules
   // as COBRA (no MAGI cliff, unrestricted withdrawals) but are labeled 'international'
   // so the user isn't confused by 25 years of "COBRA" in the projection table.
   if (profile.retirementLocation === 'international') {
     if (clientAge < 65) return 'international';
-    if (clientAge < RMD_START_AGE) return 'medicare';
+    if (clientAge < rmdStartAge) return 'medicare';
     return 'rmd';
   }
 
@@ -33,14 +34,14 @@ export function classifySeasonForYear(
   // lifetime late-enrollment penalties that dominate any savings.
   if (profile.healthcareCoverage === 'self_insure') {
     if (clientAge < 65) return 'self_insure';
-    if (clientAge < RMD_START_AGE) return 'medicare';
+    if (clientAge < rmdStartAge) return 'medicare';
     return 'rmd';
   }
 
   // US path: COBRA only applies when cobraMonths > 0
   if (profile.cobraMonths > 0 && year <= cobraEndYear) return 'cobra';
   if (clientAge < 65) return 'aca';
-  if (clientAge < RMD_START_AGE) return 'medicare';
+  if (clientAge < rmdStartAge) return 'medicare';
   return 'rmd';
 }
 

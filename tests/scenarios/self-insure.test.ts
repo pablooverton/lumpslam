@@ -94,9 +94,11 @@ describe('classifySeasonForYear — self_insure', () => {
     expect(classifySeasonForYear(2041, profile, cobraEnd)).toBe('medicare');
   });
 
-  it('age 73+ → rmd', () => {
+  it('age 75+ → rmd (born 1976 → SECURE 2.0 RMD age 75)', () => {
+    // SECURE 2.0: born ≥1960 → RMD age 75. Age 73 (2049) is still 'medicare'; 'rmd' starts at 75 (2051).
     const cobraEnd = getCobraWindowEnd(2026, 0);
-    expect(classifySeasonForYear(2049, profile, cobraEnd)).toBe('rmd');
+    expect(classifySeasonForYear(2049, profile, cobraEnd)).toBe('medicare'); // age 73
+    expect(classifySeasonForYear(2051, profile, cobraEnd)).toBe('rmd');      // age 75
   });
 
   it('international takes precedence over self_insure', () => {

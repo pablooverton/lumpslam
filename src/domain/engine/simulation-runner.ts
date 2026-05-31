@@ -14,7 +14,7 @@ import { resolveSavingsStrategy, aggregateStrategyTotals, type ResolvedYearAlloc
 import { runCoastStep, type CoastStepState } from './coast';
 import { FEDERAL_INCOME_TAX_BRACKETS_2025, STANDARD_DEDUCTION_2025, getBracketCeiling } from '../constants/tax-brackets';
 import { getAcaCliff } from '../constants/aca-thresholds';
-import { RMD_START_AGE } from '../constants/rmd-tables';
+import { getRmdStartAge } from '../constants/rmd-tables';
 import { getStateInfo } from '../constants/states';
 
 // Engine simulates everything in current-year (profile.currentYear) real dollars.
@@ -483,7 +483,8 @@ export function runSimulation(
     const ssSpouseAnnual = ssSpouseMonthly * 12;
     const totalSSAnnual = ssClientAnnual + ssSpouseAnnual;
 
-    const rmd = clientAge >= RMD_START_AGE ? calculateRMD(pretaxBalance, clientAge) : 0;
+    const rmdStartAge = getRmdStartAge(profile.client.birthYear);
+    const rmd = clientAge >= rmdStartAge ? calculateRMD(pretaxBalance, clientAge, rmdStartAge) : 0;
     const inheritedDist = inheritedDistributions[yearIndex] ?? 0;
 
     const income: IncomeBreakdown = {

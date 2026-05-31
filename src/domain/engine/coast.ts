@@ -29,8 +29,14 @@ import {
 import {
   FEDERAL_INCOME_TAX_BRACKETS_2025,
   STANDARD_DEDUCTION_2025,
+  getBracketCeiling,
 } from '../constants/tax-brackets';
 import { getStateInfo } from '../constants/states';
+import {
+  netAcaPremium,
+  getAcaCliff,
+  ACA_FULL_PREMIUM_PER_PERSON,
+} from '../constants/aca-thresholds';
 
 export interface CoastStepState {
   pretaxBalance: number;
@@ -72,9 +78,27 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
     state.hsaBalance;
 
   // ─── Income from Coast phase ────────────────────────────────────────────
-  const usSourceIncome = phase.annualIncome * phase.usSourceIncomePct;
+  const isUsCoast = phase.location === 'us';
+  // US coast: all income is US-source by definition. Foreign coast: split per usSourceIncomePct.
+  const usSourceIncome = isUsCoast
+    ? phase.annualIncome
+    : phase.annualIncome * phase.usSourceIncomePct;
   const hostSourceIncome = phase.annualIncome - usSourceIncome;
-  const desiredConversion = phase.annualConversion ?? 0;
+  const stdDeduction = STANDARD_DEDUCTION_2025[profile.filingStatus];
+
+  // Conversion sizing. US coast with no explicit annualConversion: auto-fill the remaining room
+  // up to profile.targetBracket *above* the coast salary — i.e. convert whatever cheap-bracket
+  // room the salary leaves (this is the realistic "coast and keep laddering" behavior). Foreign
+  // coast (or explicit annualConversion): use the given amount (default 0).
+  let desiredConversion = phase.annualConversion ?? 0;
+  if (isUsCoast && phase.annualConversion == null && profile.targetBracket) {
+    const ceiling = getBracketCeiling(
+      profile.targetBracket,
+      profile.filingStatus,
+      FEDERAL_INCOME_TAX_BRACKETS_2025
+    );
+    desiredConversion = Math.max(0, ceiling + stdDeduction - usSourceIncome);
+  }
 
   // ─── Roth conversion (pretax → Roth) ─────────────────────────────────────
   const actualConversion = Math.min(desiredConversion, state.pretaxBalance);
@@ -83,7 +107,6 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
 
   // ─── US federal tax on US-source income + conversion ────────────────────
   // Standard deduction reduces taxable amount (assumes Coast household files US taxes).
-  const stdDeduction = STANDARD_DEDUCTION_2025[profile.filingStatus];
   const usOrdinaryIncome = usSourceIncome + actualConversion;
   const usTaxableIncome = Math.max(0, usOrdinaryIncome - stdDeduction);
   const usFedTaxGross = calculateOrdinaryIncomeTax(
@@ -92,38 +115,51 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
     FEDERAL_INCOME_TAX_BRACKETS_2025
   );
 
-  // ─── Foreign tax via regime framework ────────────────────────────────────
-  const foreignResult = calculateForeignTax(phase.taxRegime, {
-    hostSourceIncome,
-    foreignSourceIncome: usSourceIncome,
-    rothConversionAmount: actualConversion,
-    capitalGains: 0, // Set after brokerage draw if needed; first pass assumes no realized gains
-    socialSecurityIncludable: 0, // SS not started during Coast
-    remittedToHostCountry: phase.annualRemittanceToHost ?? 0,
-    conversionTreatyProtection: phase.conversionTreatyProtection,
-    taiwanAmtInclusionMode: phase.taiwanAmtInclusionMode,
-  });
-
-  // ─── FTC application ─────────────────────────────────────────────────────
+  // ─── Foreign tax via regime framework (foreign coast only) + FTC ─────────
   // Simplified: FTC offsets US fed tax up to the amount of foreign tax paid.
   // Real Form 1116 has per-category limits; this is a planning approximation.
-  const foreignTax = foreignResult.foreignTax;
-  const foreignTaxCredit = Math.min(foreignTax, usFedTaxGross);
+  let foreignTax = 0;
+  let foreignTaxCredit = 0;
+  if (!isUsCoast && phase.taxRegime) {
+    const foreignResult = calculateForeignTax(phase.taxRegime, {
+      hostSourceIncome,
+      foreignSourceIncome: usSourceIncome,
+      rothConversionAmount: actualConversion,
+      capitalGains: 0, // Set after brokerage draw if needed; first pass assumes no realized gains
+      socialSecurityIncludable: 0, // SS not started during Coast
+      remittedToHostCountry: phase.annualRemittanceToHost ?? 0,
+      conversionTreatyProtection: phase.conversionTreatyProtection ?? 'fully_taxed',
+      taiwanAmtInclusionMode: phase.taiwanAmtInclusionMode,
+    });
+    foreignTax = foreignResult.foreignTax;
+    foreignTaxCredit = Math.min(foreignTax, usFedTaxGross);
+  }
   const usFedTaxAfterFtc = Math.max(0, usFedTaxGross - foreignTaxCredit);
 
   // ─── State tax ───────────────────────────────────────────────────────────
   // If profile maintains a US state domicile, state tax on US-source income applies.
-  // For most Coast scenarios, family establishes Florida or other no-tax domicile
-  // before going abroad. Profile.hasStateIncomeTax controls this.
+  // US coast stays domiciled (e.g. NC); foreign coast typically severs to a no-tax domicile.
+  // Profile.hasStateIncomeTax controls this.
   const stateRate = profile.hasStateIncomeTax
     ? getStateInfo(profile.stateOfResidence)?.topMarginalRate ?? 0
     : 0;
   const stateTax = usOrdinaryIncome * stateRate;
 
+  // ─── ACA net premium (US coast only) ─────────────────────────────────────
+  // On the marketplace during the coast. MAGI = salary + conversion (SS not started; brokerage-
+  // draw cap gains excluded — conservative for eligibility). Net premium follows the household-
+  // size phase-out + 400% FPL cliff. For US-coast profiles the base essential should EXCLUDE
+  // healthcare; the engine adds the size-aware ACA premium here.
+  const usCoastHouseholdSize = phase.acaHouseholdSize ?? profile.acaHouseholdSize ?? 2;
+  const usCoastMagi = usOrdinaryIncome; // salary + conversion
+  const acaNetPremium = isUsCoast ? netAcaPremium(usCoastMagi, usCoastHouseholdSize) : 0;
+
   const totalTaxLiability = usFedTaxAfterFtc + foreignTax + stateTax;
 
   // ─── Spending and shortfall draws ───────────────────────────────────────
-  const baseSpending = spending.baseAnnualSpending;
+  // US coast adds the net ACA premium on top of base living (base essential should be ex-healthcare
+  // for US-coast profiles). Foreign coast: acaNetPremium is 0 (healthcare handled by host regime).
+  const baseSpending = spending.baseAnnualSpending + acaNetPremium;
   const netIncomeAfterTax = phase.annualIncome - totalTaxLiability;
   const spendingShortfall = baseSpending - netIncomeAfterTax;
 
@@ -210,8 +246,12 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
     effectiveRate,
   };
 
-  // MAGI for US ACA purposes — irrelevant during Coast (abroad, not on ACA) but populated for table consistency
+  // MAGI for US ACA purposes. Foreign coast: abroad, not on ACA. US coast: drives eligibility.
   const magi = usOrdinaryIncome + capitalGains;
+  const acaEligible = isUsCoast ? usCoastMagi < getAcaCliff(usCoastHouseholdSize) : false;
+  const acaFullPremium = isUsCoast
+    ? ACA_FULL_PREMIUM_PER_PERSON * Math.max(1, Math.round(usCoastHouseholdSize))
+    : 0;
 
   return {
     year,
@@ -228,8 +268,8 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
     rothEndBalance: state.rothBalance,
     brokerageEndBalance: state.brokerageBalance,
     magi,
-    acaSubsidyEligible: false,
-    estimatedAcaSavings: 0,
+    acaSubsidyEligible: acaEligible,
+    estimatedAcaSavings: isUsCoast ? Math.max(0, acaFullPremium - acaNetPremium) : 0,
     irmaaApplies: false,
     irmaaSurcharge: 0,
     guardrailCutPct: 0,

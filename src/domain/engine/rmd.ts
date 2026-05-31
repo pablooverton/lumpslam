@@ -1,7 +1,11 @@
 import { RMD_UNIFORM_LIFETIME_TABLE, RMD_START_AGE } from '../constants/rmd-tables';
 
-export function calculateRMD(priorYearEndBalance: number, ownerAge: number): number {
-  if (ownerAge < RMD_START_AGE) return 0;
+export function calculateRMD(
+  priorYearEndBalance: number,
+  ownerAge: number,
+  startAge: number = RMD_START_AGE
+): number {
+  if (ownerAge < startAge) return 0;
   const distributionPeriod = RMD_UNIFORM_LIFETIME_TABLE[ownerAge];
   if (!distributionPeriod) return 0;
   return priorYearEndBalance / distributionPeriod;

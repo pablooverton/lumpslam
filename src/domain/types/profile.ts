@@ -29,24 +29,29 @@ export interface CoastPhase {
   startYear: number;
   /** Last year of this phase (inclusive). */
   endYear: number;
-  /** Country of residence during this phase — drives healthcare regime defaults. */
-  location: 'japan' | 'korea' | 'taiwan';
+  /** Residence during this phase. 'us' = domestic semi-retirement coast (stay in the US, reduced
+   *  income, on the ACA marketplace, US state tax); foreign values drive the foreign-tax regime. */
+  location: 'japan' | 'korea' | 'taiwan' | 'us';
   /** Foreign tax regime during this phase. Must align semantically with location
-   *  (e.g., 'japan_npr' or 'japan_full' for location='japan'). */
-  taxRegime: ForeignTaxRegime;
+   *  (e.g., 'japan_npr' or 'japan_full' for location='japan'). Omit for location='us'. */
+  taxRegime?: ForeignTaxRegime;
   /** Combined household annual income during this phase (real USD). */
   annualIncome: number;
   /** Fraction of annualIncome that is US-source (US remote work paid to US accounts).
-   *  Range [0, 1]. E.g., 0.6 = 60% primary earner US remote, 40% spouse local pharma. */
+   *  Range [0, 1]. E.g., 0.6 = 60% primary earner US remote, 40% spouse local pharma.
+   *  Ignored for location='us' (all income is US-source by definition). */
   usSourceIncomePct: number;
+  /** US coast only: people on the ACA plan this phase (drives the subsidy cliff by household size).
+   *  Falls back to profile.acaHouseholdSize, then 2. */
+  acaHouseholdSize?: number;
   /** Annual Roth conversion during this phase (real USD). Optional; default 0. */
   annualConversion?: number;
   /** Annual remittance from US accounts to host country (for living expenses funded from
    *  taxable brokerage rather than coast income). Drives 'remitted to host' rules. Default 0. */
   annualRemittanceToHost?: number;
-  /** REQUIRED treaty interpretation for Roth conversions during this phase.
-   *  Engine has no default — the user must declare an explicit assumption per phase. */
-  conversionTreatyProtection: ConversionTreatyProtection;
+  /** Treaty interpretation for Roth conversions during this phase. REQUIRED for foreign phases
+   *  (engine has no default — declare an explicit assumption). Omit for location='us'. */
+  conversionTreatyProtection?: ConversionTreatyProtection;
   /** For Taiwan AMT regime only: inclusion rate above NT$1M threshold.
    *  - '100pct' (default in engine): conservative; matches most authoritative sources
    *  - '50pct': optimistic; matches vault's original Taiwan analysis. Sensitivity-test only.
@@ -105,15 +110,25 @@ export function validateCoastPhases(
     if (p.annualRemittanceToHost != null && p.annualRemittanceToHost < 0) {
       errors.push(`Phase ${i}: annualRemittanceToHost must be non-negative.`);
     }
-    // Regime/location consistency (soft check — warn-style)
-    if (p.location === 'japan' && p.taxRegime !== 'japan_npr' && p.taxRegime !== 'japan_full') {
-      errors.push(`Phase ${i}: location='japan' but taxRegime='${p.taxRegime}' (expected japan_npr or japan_full).`);
-    }
-    if (p.location === 'korea' && p.taxRegime !== 'korea_under5' && p.taxRegime !== 'korea_over5') {
-      errors.push(`Phase ${i}: location='korea' but taxRegime='${p.taxRegime}' (expected korea_under5 or korea_over5).`);
-    }
-    if (p.location === 'taiwan' && p.taxRegime !== 'taiwan_amt') {
-      errors.push(`Phase ${i}: location='taiwan' but taxRegime='${p.taxRegime}' (expected taiwan_amt).`);
+    // US coast: foreign tax fields are unused; nothing further to validate here.
+    // Foreign coast: taxRegime + treaty interpretation are required, and the regime must
+    // align with the location.
+    if (p.location !== 'us') {
+      if (p.taxRegime == null) {
+        errors.push(`Phase ${i}: foreign location='${p.location}' requires taxRegime.`);
+      }
+      if (p.conversionTreatyProtection == null) {
+        errors.push(`Phase ${i}: foreign location='${p.location}' requires conversionTreatyProtection.`);
+      }
+      if (p.location === 'japan' && p.taxRegime !== 'japan_npr' && p.taxRegime !== 'japan_full') {
+        errors.push(`Phase ${i}: location='japan' but taxRegime='${p.taxRegime}' (expected japan_npr or japan_full).`);
+      }
+      if (p.location === 'korea' && p.taxRegime !== 'korea_under5' && p.taxRegime !== 'korea_over5') {
+        errors.push(`Phase ${i}: location='korea' but taxRegime='${p.taxRegime}' (expected korea_under5 or korea_over5).`);
+      }
+      if (p.location === 'taiwan' && p.taxRegime !== 'taiwan_amt') {
+        errors.push(`Phase ${i}: location='taiwan' but taxRegime='${p.taxRegime}' (expected taiwan_amt).`);
+      }
     }
   }
 
