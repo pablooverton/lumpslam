@@ -71,9 +71,9 @@ CLI-runnable without a browser.
 
 ### PII guard
 
-`cli/personal-*.json` and `cli/private-*.json` are gitignored — real names, balances,
-salaries, and SS estimates live there only. The only tracked profile is `alice-bob-example.json`
-with anonymized round numbers. When working on real scenarios, use a gitignored file. Do not
+Real personal scenarios are gitignored and live only in local files (the `cli/personal-*.json`
+and `cli/private-*.json` patterns). The only tracked profile is `alex-morgan-example.json`, with
+anonymized round numbers. When working on a real scenario, keep it in a gitignored file. Do not
 `git add` personal profiles.
 
 @AGENTS.md
