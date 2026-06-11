@@ -97,6 +97,11 @@ interface AccountInput {
   balance: number;
   /** Brokerage only: portion of balance that is return of basis (not taxable) */
   costBasis?: number;
+  /** Roth IRA only: contribution basis (direct + backdoor + Roth-401k electives that become
+   *  basis at the separation rollover) — withdrawable any time, tax/penalty-free. Omit = 0,
+   *  i.e. the whole balance is treated as pre-59½-locked earnings (maximally conservative).
+   *  Compute from statements per the pre-59½ access audit. */
+  rothContributionBasis?: number;
   /** Inherited IRA only: years remaining in the 10-year distribution rule */
   inheritedYearsRemaining?: number;
 }
@@ -166,6 +171,11 @@ interface ProfileInput {
   annualGrowthRate?: number;
   /** "us" | "international". International skips ACA season (no cliff). Default: "us" */
   retirementLocation?: 'us' | 'international';
+  /** Pre-59½ pretax-withdrawal penalty treatment. "none" (default) = 10% penalty while the
+   *  older spouse is under 59½; "72t" = SEPP elected, pretax draws penalty-free; "rule_of_55"
+   *  = penalty-free from 55 (requires the plan to allow partial post-separation withdrawals).
+   *  Roth draws always follow the IRS ordering rules regardless of this flag. */
+  pre59PenaltyExemption?: 'none' | '72t' | 'rule_of_55';
   /** Target federal bracket to fill via Roth conversion each year.
    *  Engine computes conversion = (bracketCeiling + stdDeduction) − RMD − SS_includable, all real.
    *  Automatically selects conversion_primary engine. Omit for surplus-driven conversions. */
@@ -259,6 +269,7 @@ function loadProfile(filePath: string): {
     acaHouseholdSize: input.acaHouseholdSize,
     annualGrowthRate: input.annualGrowthRate != null ? input.annualGrowthRate / 100 : undefined,
     retirementLocation: input.retirementLocation,
+    pre59PenaltyExemption: input.pre59PenaltyExemption,
     targetBracket: input.targetBracket,
     spendingEngine: input.spendingEngine,
     annualContributions,
@@ -273,6 +284,7 @@ function loadProfile(filePath: string): {
     type: a.type,
     currentBalance: a.balance,
     costBasis: a.costBasis,
+    rothContributionBasis: a.rothContributionBasis,
     isInherited: a.type === 'inherited_ira',
     inheritedIraRemainingYears: a.inheritedYearsRemaining,
   }));

@@ -32,6 +32,10 @@ export interface TaxLiability {
   foreignTax?: number;
   /** US Foreign Tax Credit applied against US federal income tax. Equals foreignTax (simplified FTC). */
   foreignTaxCredit?: number;
+  /** 10% additional tax on early withdrawals (pre-59½ pretax draws, unseasoned conversion
+   *  draws, Roth-earnings draws). Reported separately from totalFederalTax so bracket math
+   *  stays verifiable; funded from the portfolio like any other tax. */
+  earlyWithdrawalPenalty?: number;
 }
 
 export interface RothConversionEvent {
@@ -66,4 +70,8 @@ export interface YearlyProjection {
   guardrailCutPct: number;
   /** Maximum portfolio balance seen so far during retirement (peak from which drawdown is measured). */
   peakPortfolio: number;
+  /** Pre-59½ only: dollars of this year's Roth draw that could NOT come from penalty-free
+   *  sources (contribution basis + seasoned conversions) — i.e. the bridge gap funded from
+   *  unseasoned conversions or earnings at a 10% penalty. 0 once the older spouse is 59½. */
+  preFiftyNineHalfShortfall?: number;
 }

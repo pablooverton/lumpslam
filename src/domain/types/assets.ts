@@ -12,6 +12,11 @@ export interface Account {
   type: AccountType;
   currentBalance: number;
   costBasis?: number;               // brokerage only — portion that is return of basis
+  /** roth_ira only — portion of the balance that is contribution basis (direct + backdoor +
+   *  Roth-401k electives that become basis at the separation rollover). Withdrawable any
+   *  time, tax- and penalty-free. Default 0 = treat the whole balance as locked earnings
+   *  pre-59½ (maximally conservative). See pre59-access-audit-2026-06. */
+  rothContributionBasis?: number;
   isInherited?: boolean;
   inheritedIraRemainingYears?: number; // years left in 10-year rule
 }
@@ -22,6 +27,7 @@ export interface AssetSnapshot {
   // derived totals — computed by deriveAssetTotals()
   totalPretax: number;
   totalRoth: number;
+  totalRothContributionBasis: number; // capped at totalRoth
   totalBrokerage: number;
   totalInheritedIra: number;
   totalHsa: number;
@@ -35,6 +41,12 @@ export function deriveAssetTotals(accounts: Account[], homeEquity: number): Asse
   const totalRoth = accounts
     .filter((a) => a.type === 'roth_ira')
     .reduce((sum, a) => sum + a.currentBalance, 0);
+  const totalRothContributionBasis = Math.min(
+    totalRoth,
+    accounts
+      .filter((a) => a.type === 'roth_ira')
+      .reduce((sum, a) => sum + (a.rothContributionBasis ?? 0), 0)
+  );
   const totalBrokerage = accounts
     .filter((a) => a.type === 'brokerage')
     .reduce((sum, a) => sum + a.currentBalance, 0);
@@ -45,5 +57,5 @@ export function deriveAssetTotals(accounts: Account[], homeEquity: number): Asse
     .filter((a) => a.type === 'hsa')
     .reduce((sum, a) => sum + a.currentBalance, 0);
   const totalLiquid = totalPretax + totalRoth + totalBrokerage + totalInheritedIra + totalHsa;
-  return { accounts, homeEquity, totalPretax, totalRoth, totalBrokerage, totalInheritedIra, totalHsa, totalLiquid };
+  return { accounts, homeEquity, totalPretax, totalRoth, totalRothContributionBasis, totalBrokerage, totalInheritedIra, totalHsa, totalLiquid };
 }

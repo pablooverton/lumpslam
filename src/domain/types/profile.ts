@@ -223,6 +223,13 @@ export interface ClientProfile {
                                         // real-sticky (IRS-indexed). Do NOT enter a nominal value (e.g. 0.09); it will
                                         // overstate the portfolio's real purchasing power. See FINANCIAL-PRINCIPLES.md §17.
   retirementLocation?: 'us' | 'international'; // 'international' skips ACA season. Default: 'us'
+  /** Pre-59½ pretax-withdrawal penalty treatment (Roth ordering rules always apply):
+   *  - 'none' (default): 10% penalty on pretax draws while the OLDER spouse is under 59½
+   *  - '72t': SEPP elected — pretax draws penalty-free at any age (engine does not enforce
+   *    the fixed-payment schedule; planning approximation)
+   *  - 'rule_of_55': penalty-free from 55 (separation-year rule; requires the plan to allow
+   *    partial post-separation withdrawals — verify with HR), 10% before 55. */
+  pre59PenaltyExemption?: 'none' | '72t' | 'rule_of_55';
   // Healthcare coverage strategy for the pre-Medicare bridge. 'standard' = COBRA → ACA → Medicare.
   // 'self_insure' = no traditional insurance pre-65 (e.g. CrowdHealth-style health-share, medical
   // tourism, true self-pay). Engine skips ACA cliff/IRMAA gymnastics for the pre-65 window and

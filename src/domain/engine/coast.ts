@@ -22,6 +22,7 @@ import type {
   RothConversionEvent,
 } from '../types/simulation';
 import { calculateForeignTax } from './foreign-tax';
+import { addConversionLot, drawFromRoth, type RothLedger } from './roth-ledger';
 import {
   calculateOrdinaryIncomeTax,
   getMarginalRate,
@@ -64,6 +65,10 @@ export interface CoastStepInputs {
   /** This year's forced inherited-IRA distribution (10-year clock runs on calendar years).
    *  Taxed as US-source ordinary income; proceeds cover spending, excess reinvests in brokerage. */
   inheritedIraDistribution?: number;
+  /** Pre-59½ Roth accessibility ledger (shared with the runner; mutated in place). Conversions
+   *  during coast start their 5-year clocks here; shortfall Roth draws consume it in IRS order
+   *  and carry penalties/earnings income while the older spouse is under 59½. */
+  rothLedger?: RothLedger;
 }
 
 export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
@@ -111,6 +116,7 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
   const actualConversion = Math.min(desiredConversion, state.pretaxBalance);
   state.pretaxBalance -= actualConversion;
   state.rothBalance += actualConversion;
+  if (inputs.rothLedger) addConversionLot(inputs.rothLedger, year, actualConversion);
 
   // ─── Inherited-IRA distribution (forced, calendar clock) ─────────────────
   state.inheritedIraBalance = Math.max(0, state.inheritedIraBalance - inheritedIraDistribution);
@@ -208,6 +214,49 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
   // Any remaining salary surplus is treated as unmodeled cash (consumed for lifestyle, lost
   // from the investment perspective).
 
+  // ─── Pre-59½ consequences of the Roth shortfall draw (one-pass) ──────────
+  // Consume the accessibility ledger in IRS order; while the OLDER spouse is under 59½,
+  // unseasoned-conversion and earnings portions carry the 10% penalty and the earnings
+  // portion is ordinary income. The extra liability is funded after the fact (brokerage →
+  // Roth); the funding draws themselves are not re-taxed or re-penalized.
+  let earlyWithdrawalPenalty = 0;
+  let rothEarningsDrawn = 0;
+  let preFiftyNineHalfShortfall = 0;
+  if (inputs.rothLedger && fromRoth > 0) {
+    const rothDrawComposition = drawFromRoth(inputs.rothLedger, fromRoth, year);
+    const gatingAge = Math.max(clientAge, spouseAge ?? clientAge);
+    if (gatingAge < 59.5) {
+      rothEarningsDrawn = rothDrawComposition.fromEarnings;
+      earlyWithdrawalPenalty =
+        0.10 * (rothDrawComposition.fromUnseasonedConversions + rothDrawComposition.fromEarnings);
+      preFiftyNineHalfShortfall =
+        rothDrawComposition.fromUnseasonedConversions + rothDrawComposition.fromEarnings;
+    }
+  }
+  const extraFedOnEarnings =
+    rothEarningsDrawn > 0
+      ? calculateOrdinaryIncomeTax(
+          usTaxableIncome + rothEarningsDrawn,
+          profile.filingStatus,
+          FEDERAL_INCOME_TAX_BRACKETS_2025
+        ) - usFedTaxGross
+      : 0;
+  const extraStateOnEarnings = rothEarningsDrawn * stateRate;
+  let extraLiabilityToFund = earlyWithdrawalPenalty + extraFedOnEarnings + extraStateOnEarnings;
+  if (extraLiabilityToFund > 0) {
+    const extraFromBrokerage = Math.min(extraLiabilityToFund, state.brokerageBalance);
+    const extraBasisRatio =
+      state.brokerageBalance > 0 ? state.brokerageCostBasis / state.brokerageBalance : 1;
+    state.brokerageCostBasis -= extraFromBrokerage * extraBasisRatio;
+    state.brokerageBalance -= extraFromBrokerage;
+    fromBrokerage += extraFromBrokerage;
+    extraLiabilityToFund -= extraFromBrokerage;
+    const extraFromRoth = Math.min(extraLiabilityToFund, state.rothBalance);
+    state.rothBalance -= extraFromRoth;
+    fromRoth += extraFromRoth;
+    if (inputs.rothLedger) drawFromRoth(inputs.rothLedger, extraFromRoth, year);
+  }
+
   // ─── Apply growth ───────────────────────────────────────────────────────
   state.pretaxBalance       *= 1 + growthRate;
   state.rothBalance         *= 1 + growthRate;
@@ -256,18 +305,20 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
   const effectiveRate = totalForeignRelated > 0 ? totalTaxLiability / totalForeignRelated : 0;
 
   const taxLiability: TaxLiability = {
-    ordinaryIncomeTax: usFedTaxAfterFtc,
+    ordinaryIncomeTax: usFedTaxAfterFtc + extraFedOnEarnings,
     capitalGainsTax: 0, // Brokerage gains realized during draws aren't separately taxed for planning; conservative
     rothConversionTax: 0,
-    totalFederalTax: usFedTaxAfterFtc,
-    stateTax,
+    totalFederalTax: usFedTaxAfterFtc + extraFedOnEarnings,
+    stateTax: stateTax + extraStateOnEarnings,
     foreignTax,
     foreignTaxCredit,
     effectiveRate,
+    earlyWithdrawalPenalty,
   };
 
   // MAGI for US ACA purposes. Foreign coast: abroad, not on ACA. US coast: drives eligibility.
-  const magi = usOrdinaryIncome + capitalGains;
+  // Pre-59½ Roth-earnings draws are taxable income and belong in MAGI.
+  const magi = usOrdinaryIncome + capitalGains + rothEarningsDrawn;
   const acaEligible = isUsCoast ? usCoastMagi < getAcaCliff(usCoastHouseholdSize) : false;
   const acaFullPremium = isUsCoast
     ? ACA_FULL_PREMIUM_PER_PERSON * Math.max(1, Math.round(usCoastHouseholdSize))
@@ -294,5 +345,6 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
     irmaaSurcharge: 0,
     guardrailCutPct: 0,
     peakPortfolio: state.peakPortfolio,
+    preFiftyNineHalfShortfall,
   };
 }

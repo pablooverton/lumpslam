@@ -6,6 +6,7 @@ import type { GuardrailConfig, LifetimeAggregates, ScenarioResult, ScenarioType,
 import type { YearlyProjection, IncomeBreakdown, WithdrawalBreakdown, TaxLiability, RothConversionEvent } from '../types/simulation';
 import { classifySeasonForYear, calculateMAGI, assessAcaEligibility, calculateIrmaaSurcharge, getCobraWindowEnd } from './seasons';
 import { calculateRothConversion } from './roth-conversion';
+import { createRothLedger, addContribution, addConversionLot, drawFromRoth } from './roth-ledger';
 import { calculateRMD, projectInheritedIraDistributions } from './rmd';
 import { calculateBenefitAtClaimAge } from './social-security';
 import { calculateOrdinaryIncomeTax, getMarginalRate } from './tax-utils';
@@ -112,6 +113,28 @@ export function runSimulation(
   const accumulationMarginalRate = profile.savingsStrategy?.marginalTaxRateFedState ?? 0;
   let accumulationInheritedTaxReal = 0;
 
+  // ─── Pre-59½ Roth accessibility ledger ───────────────────────────────────
+  // Tracks contribution basis and 5-year conversion lots so Roth draws follow IRS ordering
+  // rules instead of being freely spendable (see roth-ledger.ts and the modeling conventions
+  // documented there; encodes the out-of-band pre-59½ access audit into the engine).
+  // Penalty gating uses the OLDER spouse's age — household accounts are pooled, and a couple
+  // draws the older spouse's accounts first. Integer age 59 is treated as still under 59½.
+  const rothLedger = createRothLedger(assets.totalRothContributionBasis);
+  const pre59Exemption = profile.pre59PenaltyExemption ?? 'none';
+  const gatingAgeForYear = (year: number): number => {
+    const c = profile.client.age + (year - profile.currentYear);
+    const s = profile.spouse ? profile.spouse.age + (year - profile.currentYear) : c;
+    return Math.max(c, s);
+  };
+  // Pretax-draw penalty rate. The 72(t)/rule-of-55 exemptions are pretax-side only; Roth
+  // draws always follow the ordering rules regardless of the flag.
+  const pretaxPenaltyRateAt = (gatingAge: number): number => {
+    if (gatingAge >= 59.5) return 0;
+    if (pre59Exemption === '72t') return 0;
+    if (pre59Exemption === 'rule_of_55' && gatingAge >= 55) return 0;
+    return 0.10;
+  };
+
   // Resolved per-year allocations — populated only when savingsStrategy is set.
   // Resolved over accumulationYears (which equals workingYears when no coast phases).
   let resolvedAllocations: ResolvedYearAllocation[] | null = null;
@@ -153,6 +176,9 @@ export function runSimulation(
     rothBalance      = rothBalance      + addRoth;
     brokerageBalance = brokerageBalance + addBrokerage;
     hsaBalance       = hsaBalance       + addHsa;
+    // Roth contributions are withdrawable basis (direct + backdoor + elective-at-rollover —
+    // see roth-ledger.ts for why electives count as basis from day one).
+    addContribution(rothLedger, addRoth);
 
     // Running HSA spend (deductibles, copays, dental, vision) drains the HSA each year
     // during accumulation as well as retirement. Without this, the HSA acts like a pure
@@ -163,6 +189,7 @@ export function runSimulation(
     const actualConversion = Math.min(wyConversion, pretaxBalance);
     pretaxBalance -= actualConversion;
     rothBalance   += actualConversion;
+    addConversionLot(rothLedger, profile.currentYear + y, actualConversion);
 
     // Inherited-IRA distribution for this calendar year (see clock note above the loop).
     const inheritedYearsLeft = inheritedOriginalRemainingYears - y;
@@ -234,6 +261,7 @@ export function runSimulation(
           state: coastState,
           brokerageGainRatio: liveGainRatio,
           inheritedIraDistribution: coastInheritedDist,
+          rothLedger,
         });
         coastProjections.push(projection);
       }
@@ -567,6 +595,9 @@ export function runSimulation(
       // IRS rule: the year's RMD must be satisfied before any conversion — cap the conversion
       // at the pretax balance net of the RMD so the two together can never overdraw the account.
       const conversionAmount = Math.min(conversionTarget, Math.max(0, pretaxBalance - rmd));
+      // The conversion starts its own 5-year clock; this year's draws consume older money
+      // first (FIFO), so the fresh lot is reachable only after basis and older lots.
+      addConversionLot(rothLedger, year, conversionAmount);
 
       // MAGI = conversion + RMD + SS (85% includable) + inherited IRA distributions + taxable injection
       const magiBase = conversionAmount + rmd + ssIncludable + inheritedDist + taxableOneTimeIncome;
@@ -615,6 +646,9 @@ export function runSimulation(
       const rothAvailable = rothBalance + conversionAmount;
       let unfundedFromRoth = Math.max(0, totalRothNeed - rothAvailable);
       const rothOutflow = totalRothNeed - unfundedFromRoth;
+      // Consume the accessibility ledger in IRS order; the composition drives pre-59½
+      // penalties and earnings income in the one-pass block below.
+      const rothDrawComposition = drawFromRoth(rothLedger, rothOutflow, year);
 
       const emergencyPretaxDraw = Math.min(
         unfundedFromRoth,
@@ -637,13 +671,26 @@ export function runSimulation(
       // approximation.
       const emergencyRealizedGains =
         (lumpyFromBrokerage + emergencyBrokerageDraw) * brokerageGainRatio;
-      const extraTaxableIncome = emergencyPretaxDraw + emergencyRealizedGains;
+      // Pre-59½ consequences of this year's draws: Roth-earnings draws are ordinary income;
+      // unseasoned-conversion and earnings draws carry the 10% recapture; emergency pretax
+      // draws carry 10% unless the profile's exemption (72t / rule-of-55) applies. Post-59½
+      // all of this is 0 (earnings draws become qualified).
+      const gatingAge = gatingAgeForYear(year);
+      const isPre59 = gatingAge < 59.5;
+      const rothEarningsDrawn = isPre59 ? rothDrawComposition.fromEarnings : 0;
+      const rothPenalty = isPre59
+        ? 0.10 * (rothDrawComposition.fromUnseasonedConversions + rothDrawComposition.fromEarnings)
+        : 0;
+      const pretaxDrawPenalty = pretaxPenaltyRateAt(gatingAge) * emergencyPretaxDraw;
+      const earlyWithdrawalPenalty = rothPenalty + pretaxDrawPenalty;
+
+      const extraTaxableIncome = emergencyPretaxDraw + emergencyRealizedGains + rothEarningsDrawn;
       const taxableWithExtra = Math.max(0, magiBase + extraTaxableIncome - stdDeduction);
       const extraFederalTax =
         calculateOrdinaryIncomeTax(taxableWithExtra, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025)
         - totalTax;
       const extraStateTax = extraTaxableIncome * stateRate;
-      const extraTaxNeed = extraFederalTax + extraStateTax;
+      const extraTaxNeed = extraFederalTax + extraStateTax + earlyWithdrawalPenalty;
 
       const rothLeftAfterOutflow = Math.max(0, rothAvailable - rothOutflow);
       const extraFromRoth = Math.min(extraTaxNeed, rothLeftAfterOutflow);
@@ -651,6 +698,8 @@ export function runSimulation(
       const extraFromPretax = Math.min(extraTaxNeed - extraFromRoth, pretaxLeft);
       const brokerageLeft = Math.max(0, brokerageBalance - lumpyFromBrokerage - emergencyBrokerageDraw);
       const extraFromBrokerage = Math.min(extraTaxNeed - extraFromRoth - extraFromPretax, brokerageLeft);
+      // The funding draw itself consumes the ledger but is not re-penalized (one-pass).
+      drawFromRoth(rothLedger, extraFromRoth, year);
 
       magi = magiBase + extraTaxableIncome;
 
@@ -733,7 +782,11 @@ export function runSimulation(
         totalFederalTax: totalFederalLiability,
         stateTax: stateTax + extraStateTax,
         effectiveRate: magi > 0 ? totalFederalLiability / magi : 0,
+        earlyWithdrawalPenalty,
       };
+      const preFiftyNineHalfShortfall = isPre59
+        ? rothDrawComposition.fromUnseasonedConversions + rothDrawComposition.fromEarnings
+        : 0;
 
       yearlyProjections.push({
         year,
@@ -756,6 +809,7 @@ export function runSimulation(
         irmaaSurcharge,
         guardrailCutPct: currentGuardrailCutPct,
         peakPortfolio,
+        preFiftyNineHalfShortfall,
       });
       magiHistory.push(magi);
 
@@ -819,12 +873,21 @@ export function runSimulation(
       // preservation pattern where the brokerage funds spending but does not blow past the cliff.
       const brokerageRealizedGains = fromBrokerage * brokerageGainRatio;
 
+      // Pre-59½ Roth ordering: the spending draw consumes the accessibility ledger now so its
+      // composition (penalty + any earnings income) is known before the tax math. The season
+      // planners above did not anticipate earnings income, so a pre-59½ ACA year drawing Roth
+      // earnings can exceed the cliff — the eligibility assessment below sees the honest MAGI.
+      const rothDrawComposition = drawFromRoth(rothLedger, fromRoth, year);
+      const gatingAge = gatingAgeForYear(year);
+      const isPre59 = gatingAge < 59.5;
+      const rothEarningsDrawn = isPre59 ? rothDrawComposition.fromEarnings : 0;
+
       magi = calculateMAGI({
         socialSecurityIncludable: totalSSAnnual * 0.85,
         pretaxWithdrawals: fromPretax + rmd,
         rothConversionAmount: 0,
         capitalGainsRealized: brokerageRealizedGains,
-        otherIncome: inheritedDist,
+        otherIncome: inheritedDist + rothEarningsDrawn,
       });
 
       if ((season === 'cobra' || season === 'international' || season === 'self_insure' || season === 'medicare' || season === 'rmd') && pretaxBalance > 0) {
@@ -847,6 +910,7 @@ export function runSimulation(
       }
 
       const magiWithConversion = magi + (rothConversion?.conversionAmount ?? 0);
+      if (rothConversion) addConversionLot(rothLedger, year, rothConversion.conversionAmount);
 
       const acaResult = season === 'aca'
         ? assessAcaEligibility(magiWithConversion, householdSize)
@@ -884,6 +948,16 @@ export function runSimulation(
       // unless the profile is state-taxed, so this is a no-op for severed-residency profiles.
       const stateTaxBase = Math.max(0, magi - totalSSAnnual * 0.85);
       const stateTax = stateTaxBase * stateRate;
+
+      // Pre-59½ penalties: 10% on the pretax gap draw (unless the profile's exemption
+      // applies) and on the penalized portions of the Roth spending draw. The tax-funding
+      // draws in the cascade below are not re-penalized (one-pass).
+      const rothPenalty = isPre59
+        ? 0.10 * (rothDrawComposition.fromUnseasonedConversions + rothDrawComposition.fromEarnings)
+        : 0;
+      const pretaxDrawPenalty = pretaxPenaltyRateAt(gatingAge) * fromPretax;
+      const earlyWithdrawalPenalty = rothPenalty + pretaxDrawPenalty;
+
       const taxLiability: TaxLiability = {
         ordinaryIncomeTax,
         capitalGainsTax: 0,
@@ -892,7 +966,11 @@ export function runSimulation(
         stateTax,
         effectiveRate:
           magiWithConversion > 0 ? totalFederalLiability / magiWithConversion : 0,
+        earlyWithdrawalPenalty,
       };
+      const preFiftyNineHalfShortfall = isPre59
+        ? rothDrawComposition.fromUnseasonedConversions + rothDrawComposition.fromEarnings
+        : 0;
 
       magi = magiWithConversion;
 
@@ -924,13 +1002,14 @@ export function runSimulation(
         };
       }
 
-      // Non-conversion federal tax + state tax (+ any conversion tax brokerage/Roth couldn't
-      // cover): Roth → brokerage → pretax cascade. MAGI-invisible sources first to avoid a
-      // tax-on-tax spiral; pretax is the last resort and that portion is not grossed up — same
-      // documented simplification as the state-tax fix. Anything still unfunded after pretax is
-      // true depletion; downstream depletion/probability checks flag it.
+      // Non-conversion federal tax + state tax + early-withdrawal penalties (+ any conversion
+      // tax brokerage/Roth couldn't cover): Roth → brokerage → pretax cascade. MAGI-invisible
+      // sources first to avoid a tax-on-tax spiral; pretax is the last resort and that portion
+      // is not grossed up — same documented simplification as the state-tax fix. Anything still
+      // unfunded after pretax is true depletion; downstream depletion/probability checks flag it.
       let residualTax =
-        ordinaryIncomeTax + stateTax + (rothConversionTax - convTaxFromBrokerage - convTaxFromRoth);
+        ordinaryIncomeTax + stateTax + earlyWithdrawalPenalty
+        + (rothConversionTax - convTaxFromBrokerage - convTaxFromRoth);
 
       // BUG FIX 2026-06-11: excess cash income over spending (large-RMD years, SS above spending)
       // previously vanished — withdrawn and taxed but neither spent nor reinvested. It now pays
@@ -948,6 +1027,8 @@ export function runSimulation(
       );
       residualTax -= residualFromBrokerage;
       const residualFromPretax = Math.min(pretaxAfter, residualTax);
+      // Tax-funding Roth draws consume the ledger but are not re-penalized (one-pass).
+      drawFromRoth(rothLedger, convTaxFromRoth + residualFromRoth, year);
 
       pretaxBalance = Math.max(
         0,
@@ -999,6 +1080,7 @@ export function runSimulation(
         irmaaSurcharge,
         guardrailCutPct: currentGuardrailCutPct,
         peakPortfolio,
+        preFiftyNineHalfShortfall,
       });
       magiHistory.push(magi);
     }
@@ -1042,9 +1124,11 @@ export function runSimulation(
 
   let retirementFederalTaxReal = 0;
   let retirementStateTaxReal = 0;
+  let penaltiesPaidReal = 0;
   for (const proj of yearlyProjections) {
     retirementFederalTaxReal += proj.taxLiability.totalFederalTax;
     retirementStateTaxReal   += proj.taxLiability.stateTax;
+    penaltiesPaidReal        += proj.taxLiability.earlyWithdrawalPenalty ?? 0;
   }
 
   // Working-year state tax on conversions (proportion of combined rate that is state).
@@ -1110,7 +1194,8 @@ export function runSimulation(
   const lifetime: LifetimeAggregates = {
     federalTaxPaid: lifetimeFederalTaxReal,
     stateTaxPaid: lifetimeStateTaxReal,
-    totalTaxPaid: lifetimeFederalTaxReal + lifetimeStateTaxReal,
+    earlyWithdrawalPenaltiesPaid: penaltiesPaidReal,
+    totalTaxPaid: lifetimeFederalTaxReal + lifetimeStateTaxReal + penaltiesPaidReal,
     workingYearConversionTaxPaid: accumulationConversionTaxReal,
     terminal: {
       pretax: terminalPretaxReal,

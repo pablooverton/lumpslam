@@ -75,7 +75,8 @@ function conservationViolations(
       .filter((e) => e.year === p.year)
       .reduce((s, e) => s + e.amount, 0);
     const expectedDrop =
-      spending.baseAnnualSpending + oneTime + p.taxLiability.totalFederalTax + p.taxLiability.stateTax - ss;
+      spending.baseAnnualSpending + oneTime + p.taxLiability.totalFederalTax + p.taxLiability.stateTax
+      + (p.taxLiability.earlyWithdrawalPenalty ?? 0) - ss;
     const actualDrop = p.portfolioStartBalance - p.portfolioEndBalance;
     if (Math.abs(actualDrop - expectedDrop) >= tolerance) {
       violations.push(

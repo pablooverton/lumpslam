@@ -37,7 +37,10 @@ export interface LifetimeAggregates {
   federalTaxPaid: number;
   /** Sum of state tax across all years, real dollars. */
   stateTaxPaid: number;
-  /** Total federal + state tax, real dollars. */
+  /** Sum of 10% early-withdrawal penalties (pre-59½), real dollars. Kept separate from
+   *  federalTaxPaid so bracket-math identities stay verifiable. */
+  earlyWithdrawalPenaltiesPaid: number;
+  /** Total federal + state tax + early-withdrawal penalties, real dollars. */
   totalTaxPaid: number;
   /** Total conversion tax paid during working years (outside-cash sourcing), real dollars. */
   workingYearConversionTaxPaid: number;
