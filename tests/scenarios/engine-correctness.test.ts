@@ -133,8 +133,13 @@ const rmdProfile: ClientProfile = {
   // No targetBracket → auto = withdrawal_sequencing (has brokerage)
 };
 
+// Re-derived 2026-06-11 (conservation fixes): with taxes actually funded and the conversion
+// capped at the post-withdrawal pretax balance, the old $1.5M IRA exhausted at exactly RMD
+// start age — its single "RMD-year conversion" was a phantom conversion of dollars the same
+// year's withdrawals had already spent. $2.5M keeps pretax alive well into RMD season, which
+// is what this scenario is about.
 const rmdAccounts: Account[] = [
-  { id: '1', label: 'IRA',       owner: 'client', type: 'pretax_ira', currentBalance: 1_500_000 },
+  { id: '1', label: 'IRA',       owner: 'client', type: 'pretax_ira', currentBalance: 2_500_000 },
   { id: '2', label: 'Brokerage', owner: 'client', type: 'brokerage',  currentBalance: 500_000, costBasis: 300_000 },
 ];
 

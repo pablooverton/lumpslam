@@ -61,10 +61,17 @@ export interface CoastStepInputs {
   /** Portion of brokerage balance that is gain (taxable on withdrawal); 1 - gainRatio is basis.
    *  Engine recomputes this dynamically as state.brokerageBalance and state.brokerageCostBasis change. */
   brokerageGainRatio: number;
+  /** This year's forced inherited-IRA distribution (10-year clock runs on calendar years).
+   *  Taxed as US-source ordinary income; proceeds cover spending, excess reinvests in brokerage. */
+  inheritedIraDistribution?: number;
 }
 
 export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
   const { year, phase, profile, spending, growthRate, state } = inputs;
+  const inheritedIraDistribution = Math.min(
+    inputs.inheritedIraDistribution ?? 0,
+    state.inheritedIraBalance
+  );
   const clientAge = profile.client.age + (year - profile.currentYear);
   const spouseAge = profile.spouse
     ? profile.spouse.age + (year - profile.currentYear)
@@ -105,9 +112,13 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
   state.pretaxBalance -= actualConversion;
   state.rothBalance += actualConversion;
 
+  // ─── Inherited-IRA distribution (forced, calendar clock) ─────────────────
+  state.inheritedIraBalance = Math.max(0, state.inheritedIraBalance - inheritedIraDistribution);
+
   // ─── US federal tax on US-source income + conversion ────────────────────
   // Standard deduction reduces taxable amount (assumes Coast household files US taxes).
-  const usOrdinaryIncome = usSourceIncome + actualConversion;
+  // Inherited-IRA distributions are US-source ordinary income wherever the household lives.
+  const usOrdinaryIncome = usSourceIncome + actualConversion + inheritedIraDistribution;
   const usTaxableIncome = Math.max(0, usOrdinaryIncome - stdDeduction);
   const usFedTaxGross = calculateOrdinaryIncomeTax(
     usTaxableIncome,
@@ -123,7 +134,10 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
   if (!isUsCoast && phase.taxRegime) {
     const foreignResult = calculateForeignTax(phase.taxRegime, {
       hostSourceIncome,
-      foreignSourceIncome: usSourceIncome,
+      // US-source income from the host country's perspective; inherited-IRA distributions
+      // received while host-resident are included (planning approximation — pension-article
+      // treaty treatment varies by country).
+      foreignSourceIncome: usSourceIncome + inheritedIraDistribution,
       rothConversionAmount: actualConversion,
       capitalGains: 0, // Set after brokerage draw if needed; first pass assumes no realized gains
       socialSecurityIncludable: 0, // SS not started during Coast
@@ -160,7 +174,7 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
   // US coast adds the net ACA premium on top of base living (base essential should be ex-healthcare
   // for US-coast profiles). Foreign coast: acaNetPremium is 0 (healthcare handled by host regime).
   const baseSpending = spending.baseAnnualSpending + acaNetPremium;
-  const netIncomeAfterTax = phase.annualIncome - totalTaxLiability;
+  const netIncomeAfterTax = phase.annualIncome + inheritedIraDistribution - totalTaxLiability;
   const spendingShortfall = baseSpending - netIncomeAfterTax;
 
   let fromBrokerage = 0;
@@ -179,14 +193,20 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
       fromRoth = Math.min(rothNeed, state.rothBalance);
       state.rothBalance -= fromRoth;
     }
-  } else if (spendingShortfall < 0 && phase.routeSurplusToBrokerage) {
+  } else if (spendingShortfall < 0) {
+    const surplus = -spendingShortfall;
     // Surplus → taxable brokerage with 100% cost basis (post-tax cash contribution).
-    surplusToBrokerage = -spendingShortfall;
+    // Forced inherited-IRA proceeds always reinvest — they are distributed principal, not
+    // lifestyle cash. Salary surplus keeps the documented evaporate-by-default behavior
+    // unless routeSurplusToBrokerage opts in.
+    surplusToBrokerage = phase.routeSurplusToBrokerage
+      ? surplus
+      : Math.min(surplus, inheritedIraDistribution);
     state.brokerageBalance += surplusToBrokerage;
     state.brokerageCostBasis += surplusToBrokerage;
   }
-  // If surplus exists but routeSurplusToBrokerage is false (default): surplus is treated as
-  // unmodeled cash (consumed for lifestyle, lost from investment perspective).
+  // Any remaining salary surplus is treated as unmodeled cash (consumed for lifestyle, lost
+  // from the investment perspective).
 
   // ─── Apply growth ───────────────────────────────────────────────────────
   state.pretaxBalance       *= 1 + growthRate;
@@ -208,9 +228,9 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
     socialSecurityClient: 0,
     socialSecuritySpouse: 0,
     requiredMinimumDistribution: 0,
-    inheritedIraDistribution: 0,
+    inheritedIraDistribution,
     otherIncome: phase.annualIncome,
-    total: phase.annualIncome,
+    total: phase.annualIncome + inheritedIraDistribution,
   };
 
   const withdrawals: WithdrawalBreakdown = {

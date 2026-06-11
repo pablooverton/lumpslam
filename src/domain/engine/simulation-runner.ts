@@ -99,6 +99,19 @@ export function runSimulation(
   // model — freeCashFlow is real and the tax is computed against it at the marginal rate.
   const workingYearConversionTaxByYear: number[] = [];
 
+  // ─── Inherited-IRA 10-year clock ─────────────────────────────────────────
+  // BUG FIX 2026-06-11: the IRS 10-year window runs on calendar years, not retirement years.
+  // Previously no distributions were modeled before retirement at all, so any profile with
+  // workingYears ≥ the remaining window silently never distributed — the balance compounded
+  // untaxed forever inside portfolio totals. Distributions now run through accumulation and
+  // coast years too: equal annual amounts over the remaining window, taxed at the working-year
+  // marginal rate when a savings strategy provides one (0 otherwise — the engine has no other
+  // working-year tax model), net proceeds reinvested in brokerage.
+  const inheritedAccount = assets.accounts.find((a) => a.type === 'inherited_ira');
+  const inheritedOriginalRemainingYears = inheritedAccount?.inheritedIraRemainingYears ?? 10;
+  const accumulationMarginalRate = profile.savingsStrategy?.marginalTaxRateFedState ?? 0;
+  let accumulationInheritedTaxReal = 0;
+
   // Resolved per-year allocations — populated only when savingsStrategy is set.
   // Resolved over accumulationYears (which equals workingYears when no coast phases).
   let resolvedAllocations: ResolvedYearAllocation[] | null = null;
@@ -151,6 +164,16 @@ export function runSimulation(
     pretaxBalance -= actualConversion;
     rothBalance   += actualConversion;
 
+    // Inherited-IRA distribution for this calendar year (see clock note above the loop).
+    const inheritedYearsLeft = inheritedOriginalRemainingYears - y;
+    if (inheritedIraBalance > 0 && inheritedYearsLeft >= 1) {
+      const dist = inheritedIraBalance / inheritedYearsLeft;
+      inheritedIraBalance -= dist;
+      const distTax = dist * accumulationMarginalRate;
+      brokerageBalance += dist - distTax;
+      accumulationInheritedTaxReal += distTax;
+    }
+
     pretaxBalance       = pretaxBalance       * (1 + growthRate);
     rothBalance         = rothBalance         * (1 + growthRate);
     brokerageBalance    = brokerageBalance    * (1 + growthRate);
@@ -193,6 +216,15 @@ export function runSimulation(
         const liveGainRatio = coastState.brokerageBalance > 0
           ? Math.max(0, Math.min(1, (coastState.brokerageBalance - coastState.brokerageCostBasis) / coastState.brokerageBalance))
           : 0;
+        // Inherited-IRA clock keeps running through coast years (calendar-based — see the
+        // clock note above the accumulation loop). The distribution is handed to the coast
+        // step, which taxes it as US-source ordinary income and conserves the proceeds.
+        const coastYearsElapsed = coastYear - profile.currentYear;
+        const coastInheritedYearsLeft = inheritedOriginalRemainingYears - coastYearsElapsed;
+        const coastInheritedDist =
+          coastState.inheritedIraBalance > 0 && coastInheritedYearsLeft >= 1
+            ? coastState.inheritedIraBalance / coastInheritedYearsLeft
+            : 0;
         const projection = runCoastStep({
           year: coastYear,
           phase,
@@ -201,6 +233,7 @@ export function runSimulation(
           growthRate,
           state: coastState,
           brokerageGainRatio: liveGainRatio,
+          inheritedIraDistribution: coastInheritedDist,
         });
         coastProjections.push(projection);
       }
@@ -332,9 +365,10 @@ export function runSimulation(
   const getLookbackMagi = (currentMagi: number): number =>
     magiHistory.length >= 2 ? magiHistory[magiHistory.length - 2] : currentMagi;
 
-  const inheritedAccount = assets.accounts.find((a) => a.type === 'inherited_ira');
-  const originalRemainingYears = inheritedAccount?.inheritedIraRemainingYears ?? 10;
-  const adjustedRemainingYears = Math.max(0, originalRemainingYears - workingYears);
+  // Pre-retirement years already took their distributions (accumulation + coast loops above),
+  // so the balance arriving here is mid-schedule; the retirement loop distributes whatever
+  // window remains. The window never silently expires with a balance left.
+  const adjustedRemainingYears = Math.max(0, inheritedOriginalRemainingYears - workingYears);
 
   const inheritedDistributions = projectInheritedIraDistributions(
     inheritedIraBalance,
@@ -530,7 +564,9 @@ export function runSimulation(
         0,
         magiCapacity - rmd - ssIncludable - inheritedDist - taxableOneTimeIncome
       );
-      const conversionAmount = Math.min(conversionTarget, pretaxBalance);
+      // IRS rule: the year's RMD must be satisfied before any conversion — cap the conversion
+      // at the pretax balance net of the RMD so the two together can never overdraw the account.
+      const conversionAmount = Math.min(conversionTarget, Math.max(0, pretaxBalance - rmd));
 
       // MAGI = conversion + RMD + SS (85% includable) + inherited IRA distributions + taxable injection
       const magiBase = conversionAmount + rmd + ssIncludable + inheritedDist + taxableOneTimeIncome;
@@ -549,11 +585,24 @@ export function runSimulation(
       const stateTax = stateTaxBase * stateRate;
 
       // T6: lumpy expenses (e.g. rebuy a house) draw from brokerage first, Roth as overflow.
-      // Recurring spending (annualSpending minus oneTimeExpense) still funds from Roth net of SS.
+      //
+      // BUG FIX 2026-06-11: RMD and inherited-IRA proceeds previously vanished — withdrawn from
+      // pretax (and taxed via magiBase) but never spent nor reinvested. Cash income (SS + RMD +
+      // inherited distributions) now covers recurring spending, then lumpy overflow, then the
+      // year's tax bill; any remainder is reinvested in brokerage. Roth only funds what cash
+      // income cannot.
       const recurringSpending = Math.max(0, annualSpending - oneTimeExpense);
       const lumpyFromBrokerage = Math.min(oneTimeExpense, brokerageBalance);
-      const lumpyOverflowToRoth = oneTimeExpense - lumpyFromBrokerage;
-      const rothSpendingDraw = Math.max(0, recurringSpending - totalSSAnnual) + lumpyOverflowToRoth;
+      const lumpyOverflowNeed = oneTimeExpense - lumpyFromBrokerage;
+
+      const cashIncome = totalSSAnnual + rmd + inheritedDist;
+      const cashUsedForSpending = Math.min(cashIncome, recurringSpending + lumpyOverflowNeed);
+      const cashLeftAfterSpending = cashIncome - cashUsedForSpending;
+      const cashUsedForTaxes = Math.min(cashLeftAfterSpending, totalTax + stateTax);
+      const excessIncomeToBrokerage = cashLeftAfterSpending - cashUsedForTaxes;
+
+      const rothSpendingNeed = recurringSpending + lumpyOverflowNeed - cashUsedForSpending;
+      const rothTaxNeed = totalTax + stateTax - cashUsedForTaxes;
 
       // Funding cascade when Roth alone can't cover spending + taxes:
       //   Tier 1: Roth (rothAvailable = balance + conversion-in)
@@ -562,11 +611,15 @@ export function runSimulation(
       // Bug fix 2026-05-15: prior code only had Tier 2 — when both Roth AND pretax were depleted
       // but brokerage had money, the engine silently failed to draw any spending. This made
       // extreme early-retirement scenarios appear feasible by phantom-zero-spending years.
-      const totalRothNeed = totalTax + stateTax + rothSpendingDraw;
+      const totalRothNeed = rothTaxNeed + rothSpendingNeed;
       const rothAvailable = rothBalance + conversionAmount;
       let unfundedFromRoth = Math.max(0, totalRothNeed - rothAvailable);
+      const rothOutflow = totalRothNeed - unfundedFromRoth;
 
-      const emergencyPretaxDraw = Math.min(unfundedFromRoth, pretaxBalance);
+      const emergencyPretaxDraw = Math.min(
+        unfundedFromRoth,
+        Math.max(0, pretaxBalance - rmd - conversionAmount)
+      );
       unfundedFromRoth -= emergencyPretaxDraw;
 
       const emergencyBrokerageDraw = Math.min(unfundedFromRoth, brokerageBalance - lumpyFromBrokerage);
@@ -574,32 +627,86 @@ export function runSimulation(
       // The engine doesn't synthetically create money; the portfolio simply runs out and downstream
       // probability calc will flag it. MC depletion-floor (< $10k) will count the trial as a failure.
 
-      magi = magiBase;
+      // BUG FIX 2026-06-11 (#3): the emergency pretax draw is ordinary income, and brokerage
+      // draws (lumpy + emergency) realize gains — none of this previously entered MAGI or the
+      // tax bill, so precisely the stressed years near the feasibility boundary were
+      // under-taxed. One-pass gross-up: tax the extra income at the bracket-true increment
+      // (gains at ordinary rates for now; LTCG stacking is a planned refinement), fund it from
+      // whatever remains (Roth → pretax → brokerage), and report the grossed-up MAGI so
+      // ACA/IRMAA see it. The funding draws themselves are not re-taxed — documented one-pass
+      // approximation.
+      const emergencyRealizedGains =
+        (lumpyFromBrokerage + emergencyBrokerageDraw) * brokerageGainRatio;
+      const extraTaxableIncome = emergencyPretaxDraw + emergencyRealizedGains;
+      const taxableWithExtra = Math.max(0, magiBase + extraTaxableIncome - stdDeduction);
+      const extraFederalTax =
+        calculateOrdinaryIncomeTax(taxableWithExtra, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025)
+        - totalTax;
+      const extraStateTax = extraTaxableIncome * stateRate;
+      const extraTaxNeed = extraFederalTax + extraStateTax;
+
+      const rothLeftAfterOutflow = Math.max(0, rothAvailable - rothOutflow);
+      const extraFromRoth = Math.min(extraTaxNeed, rothLeftAfterOutflow);
+      const pretaxLeft = Math.max(0, pretaxBalance - rmd - conversionAmount - emergencyPretaxDraw);
+      const extraFromPretax = Math.min(extraTaxNeed - extraFromRoth, pretaxLeft);
+      const brokerageLeft = Math.max(0, brokerageBalance - lumpyFromBrokerage - emergencyBrokerageDraw);
+      const extraFromBrokerage = Math.min(extraTaxNeed - extraFromRoth - extraFromPretax, brokerageLeft);
+
+      magi = magiBase + extraTaxableIncome;
+
+      // Roth outflow is attributed to taxes first ("Roth pays taxes + living"); the remainder
+      // is spending. Emergency draws cover whatever Roth could not.
+      const rothFundingForTaxes = Math.min(rothTaxNeed, rothOutflow);
+      const rothSpendingDraw = rothOutflow - rothFundingForTaxes;
+
+      // Component split for reporting: ordinary tax is what the year would owe with no
+      // conversion; the conversion's share is the bracket-true increment on top. Sums to the
+      // single computed liability — no double count.
+      const totalFederalLiability = totalTax + extraFederalTax;
+      const taxableExConversion = Math.max(
+        0,
+        magiBase + extraTaxableIncome - conversionAmount - stdDeduction
+      );
+      const ordinaryIncomeTax = calculateOrdinaryIncomeTax(
+        taxableExConversion,
+        profile.filingStatus,
+        FEDERAL_INCOME_TAX_BRACKETS_2025
+      );
+      const rothConversionTax = totalFederalLiability - ordinaryIncomeTax;
 
       rothConversion = {
         conversionAmount,
         marginalRate,
-        taxOnConversion: totalTax,
+        taxOnConversion: rothConversionTax,
         brokerageFundingAmount: 0,
-        rothFundingAmount: totalTax + stateTax, // federal + state taxes paid from Roth
+        rothFundingAmount: rothFundingForTaxes + extraFromRoth, // taxes paid from Roth, net of cash income
       };
 
       withdrawals = {
-        fromPretax: rmd + emergencyPretaxDraw,
-        fromBrokerage: lumpyFromBrokerage + emergencyBrokerageDraw,
+        fromPretax: rmd + emergencyPretaxDraw + extraFromPretax,
+        fromBrokerage: lumpyFromBrokerage + emergencyBrokerageDraw + extraFromBrokerage,
         fromRoth: rothSpendingDraw,
-        total: rmd + emergencyPretaxDraw + rothSpendingDraw + lumpyFromBrokerage + emergencyBrokerageDraw,
+        total: rmd + emergencyPretaxDraw + extraFromPretax + rothSpendingDraw
+          + lumpyFromBrokerage + emergencyBrokerageDraw + extraFromBrokerage,
       };
 
       // Portfolio updates
       const portfolioStart = pretaxBalance + rothBalance + brokerageBalance + inheritedIraBalance + hsaBalance;
 
-      pretaxBalance = Math.max(0, pretaxBalance - rmd - emergencyPretaxDraw - conversionAmount);
-      // Roth: gains conversion, pays taxes (federal + state) and spending
-      rothBalance = Math.max(0, rothBalance + conversionAmount - totalTax - stateTax - rothSpendingDraw);
+      pretaxBalance = Math.max(
+        0,
+        pretaxBalance - rmd - emergencyPretaxDraw - conversionAmount - extraFromPretax
+      );
+      // Roth: gains conversion, pays taxes (federal + state) and spending net of cash income
+      rothBalance = Math.max(0, rothBalance + conversionAmount - rothOutflow - extraFromRoth);
       // T6: brokerage funds the lumpy expense; Tier-3 fallback also draws from brokerage when
-      // Roth + pretax cannot cover annual spending.
-      brokerageBalance = Math.max(0, brokerageBalance - lumpyFromBrokerage - emergencyBrokerageDraw);
+      // Roth + pretax cannot cover annual spending. Excess cash income (large-RMD years) is
+      // reinvested here.
+      brokerageBalance = Math.max(
+        0,
+        brokerageBalance - lumpyFromBrokerage - emergencyBrokerageDraw - extraFromBrokerage
+          + excessIncomeToBrokerage
+      );
       inheritedIraBalance = Math.max(0, inheritedIraBalance - inheritedDist);
       hsaBalance = Math.max(0, hsaBalance - fromHsa);
 
@@ -620,12 +727,12 @@ export function runSimulation(
 
       // State tax (stateTaxBase/stateTax computed above, where it is also funded from Roth).
       const taxLiability: TaxLiability = {
-        ordinaryIncomeTax: 0, // all tax is on the conversion
-        capitalGainsTax: 0,
-        rothConversionTax: totalTax,
-        totalFederalTax: totalTax,
-        stateTax,
-        effectiveRate: magi > 0 ? totalTax / magi : 0,
+        ordinaryIncomeTax,
+        capitalGainsTax: 0, // realized gains taxed at ordinary rates inside ordinaryIncomeTax (LTCG = planned)
+        rothConversionTax,
+        totalFederalTax: totalFederalLiability,
+        stateTax: stateTax + extraStateTax,
+        effectiveRate: magi > 0 ? totalFederalLiability / magi : 0,
       };
 
       yearlyProjections.push({
@@ -662,6 +769,10 @@ export function runSimulation(
       const incomeGap = Math.max(0, annualSpending - income.total);
       const nonEssentialSpend = travelBudget + spending.charitableGivingAnnual;
 
+      // The RMD leaves pretax regardless of the spending gap (withdrawals.fromPretax adds it
+      // below) — gap draws may only touch what remains, or large-RMD years overdraw the account.
+      const pretaxAvailableForGap = Math.max(0, pretaxBalance - rmd);
+
       let fromBrokerage = 0;
       let fromPretax = 0;
       let fromRoth = 0;
@@ -669,7 +780,7 @@ export function runSimulation(
       if (season === 'cobra' || season === 'international' || season === 'self_insure') {
         fromBrokerage = Math.min(nonEssentialSpend, brokerageBalance, incomeGap);
         const remainingGap = incomeGap - fromBrokerage;
-        fromPretax = Math.min(remainingGap, pretaxBalance);
+        fromPretax = Math.min(remainingGap, pretaxAvailableForGap);
         fromRoth = Math.max(0, remainingGap - fromPretax);
       } else if (season === 'aca') {
         // Plan the sequence so MAGI stays under the cliff. Brokerage withdrawals now count their
@@ -686,11 +797,11 @@ export function runSimulation(
         const magiAfterBrokerage = passiveMagi + fromBrokerage * brokerageGainRatio;
         const pretaxMagiCapacity = Math.max(0, ACA_CLIFF - magiAfterBrokerage - 1);
         const afterBrokerage = incomeGap - fromBrokerage;
-        fromPretax = Math.min(afterBrokerage, pretaxBalance, pretaxMagiCapacity);
+        fromPretax = Math.min(afterBrokerage, pretaxAvailableForGap, pretaxMagiCapacity);
         const afterPretax = afterBrokerage - fromPretax;
         fromRoth = Math.min(afterPretax, rothBalance);
       } else {
-        fromPretax = Math.min(incomeGap, pretaxBalance);
+        fromPretax = Math.min(incomeGap, pretaxAvailableForGap);
         const remainingGap = incomeGap - fromPretax;
         fromBrokerage = Math.min(remainingGap, brokerageBalance);
         fromRoth = Math.max(0, remainingGap - fromBrokerage);
@@ -727,7 +838,8 @@ export function runSimulation(
           currentMAGI: magi,
           surplusSpendingCapacity: Math.max(0, surplus),
           targetAmount: undefined,
-          pretaxBalance,
+          // Net of this year's withdrawals — the conversion moves what is actually still there.
+          pretaxBalance: Math.max(0, pretaxBalance - withdrawals.fromPretax),
           brokerageBalance,
           filingStatus: profile.filingStatus,
           targetBracketCeiling: TARGET_BRACKET_CEILING,
@@ -746,13 +858,27 @@ export function runSimulation(
 
       // Real-internal: MAGI is already in current-year real dollars; tax brackets and the
       // standard deduction are real-sticky (IRS indexes them), so compute tax directly.
-      const taxableWC = Math.max(0, magiWithConversion - stdDeduction);
-      const ordinaryIncomeTax = calculateOrdinaryIncomeTax(
-        taxableWC,
+      //
+      // BUG FIX 2026-06-11: federal ordinary income tax was reported here but NEVER deducted
+      // from the portfolio — only the conversion's marginal-rate tax estimate (via the
+      // rothConversion funding amounts) and, since 2026-05-29, state tax were funded. Federal
+      // sibling of the state-tax bug fixed in 3b30a41. Liability is now computed once on full
+      // MAGI (with conversion); the conversion's share is the bracket-true increment
+      // tax(with) − tax(without), reported as a component of totalFederalTax rather than added
+      // on top (the old form double-counted it in totalFederalTax/lifetime aggregates).
+      const taxableWithConversion = Math.max(0, magiWithConversion - stdDeduction);
+      const totalFederalLiability = calculateOrdinaryIncomeTax(
+        taxableWithConversion,
         profile.filingStatus,
         FEDERAL_INCOME_TAX_BRACKETS_2025
       );
-      const rothConversionTax = rothConversion?.taxOnConversion ?? 0;
+      const taxableBase = Math.max(0, magi - stdDeduction);
+      const ordinaryIncomeTax = calculateOrdinaryIncomeTax(
+        taxableBase,
+        profile.filingStatus,
+        FEDERAL_INCOME_TAX_BRACKETS_2025
+      );
+      const rothConversionTax = totalFederalLiability - ordinaryIncomeTax;
 
       // State income tax on non-SS ordinary income at the state top marginal rate. stateRate is 0
       // unless the profile is state-taxed, so this is a no-op for severed-residency profiles.
@@ -762,12 +888,10 @@ export function runSimulation(
         ordinaryIncomeTax,
         capitalGainsTax: 0,
         rothConversionTax,
-        totalFederalTax: ordinaryIncomeTax + rothConversionTax,
+        totalFederalTax: totalFederalLiability,
         stateTax,
         effectiveRate:
-          magiWithConversion > 0
-            ? (ordinaryIncomeTax + rothConversionTax) / magiWithConversion
-            : 0,
+          magiWithConversion > 0 ? totalFederalLiability / magiWithConversion : 0,
       };
 
       magi = magiWithConversion;
@@ -775,41 +899,72 @@ export function runSimulation(
       const portfolioStart =
         pretaxBalance + rothBalance + brokerageBalance + inheritedIraBalance + hsaBalance;
 
-      // BUG FIX 2026-05-29 (companion to the conversion-primary fix): fund state income tax from the
-      // portfolio. Previously stateTax was reported in taxLiability but never deducted, so any
-      // state-taxed profile using this branch understated its drag. Pay from Roth first
-      // (MAGI-invisible, no tax-on-tax spiral), then brokerage, then pretax — computed against the
-      // post-withdrawal, post-conversion balances so it never double-counts a draw.
+      // ─── Tax funding ───────────────────────────────────────────────────────
+      // Balances left after the spending withdrawals and the conversion transfer — funding
+      // draws are computed against these so they can never overdraw a dollar the withdrawals
+      // already spent.
       const rothAfter = Math.max(0,
-        rothBalance - withdrawals.fromRoth
-          + (rothConversion?.conversionAmount ?? 0)
-          - (rothConversion?.rothFundingAmount ?? 0));
+        rothBalance - withdrawals.fromRoth + (rothConversion?.conversionAmount ?? 0));
       const brokerageAfter = Math.max(0,
-        brokerageBalance - withdrawals.fromBrokerage - (rothConversion?.brokerageFundingAmount ?? 0));
+        brokerageBalance - withdrawals.fromBrokerage);
       const pretaxAfter = Math.max(0,
         pretaxBalance - withdrawals.fromPretax - (rothConversion?.conversionAmount ?? 0));
-      let stateTaxRemaining = stateTax;
-      const stateTaxFromRoth = Math.min(rothAfter, stateTaxRemaining);
-      stateTaxRemaining -= stateTaxFromRoth;
-      const stateTaxFromBrokerage = Math.min(brokerageAfter, stateTaxRemaining);
-      stateTaxRemaining -= stateTaxFromBrokerage;
-      const stateTaxFromPretax = Math.min(pretaxAfter, stateTaxRemaining);
+
+      // Conversion-increment tax: brokerage first (the surplus-funded conversion model), Roth
+      // as overflow — the same split calculateRothConversion estimates, but sized to the
+      // bracket-true increment rather than the flat marginal-rate guess.
+      const convTaxFromBrokerage = Math.min(rothConversionTax, brokerageAfter);
+      const convTaxFromRoth = Math.min(rothConversionTax - convTaxFromBrokerage, rothAfter);
+      if (rothConversion) {
+        rothConversion = {
+          ...rothConversion,
+          taxOnConversion: rothConversionTax,
+          brokerageFundingAmount: convTaxFromBrokerage,
+          rothFundingAmount: convTaxFromRoth,
+        };
+      }
+
+      // Non-conversion federal tax + state tax (+ any conversion tax brokerage/Roth couldn't
+      // cover): Roth → brokerage → pretax cascade. MAGI-invisible sources first to avoid a
+      // tax-on-tax spiral; pretax is the last resort and that portion is not grossed up — same
+      // documented simplification as the state-tax fix. Anything still unfunded after pretax is
+      // true depletion; downstream depletion/probability checks flag it.
+      let residualTax =
+        ordinaryIncomeTax + stateTax + (rothConversionTax - convTaxFromBrokerage - convTaxFromRoth);
+
+      // BUG FIX 2026-06-11: excess cash income over spending (large-RMD years, SS above spending)
+      // previously vanished — withdrawn and taxed but neither spent nor reinvested. It now pays
+      // the tax bill first; the remainder is reinvested in brokerage.
+      const excessIncome = Math.max(0, income.total - annualSpending);
+      const residualFromCash = Math.min(excessIncome, residualTax);
+      residualTax -= residualFromCash;
+      const excessIncomeToBrokerage = excessIncome - residualFromCash;
+
+      const residualFromRoth = Math.min(Math.max(0, rothAfter - convTaxFromRoth), residualTax);
+      residualTax -= residualFromRoth;
+      const residualFromBrokerage = Math.min(
+        Math.max(0, brokerageAfter - convTaxFromBrokerage),
+        residualTax
+      );
+      residualTax -= residualFromBrokerage;
+      const residualFromPretax = Math.min(pretaxAfter, residualTax);
 
       pretaxBalance = Math.max(
         0,
-        pretaxBalance - withdrawals.fromPretax - (rothConversion?.conversionAmount ?? 0) - stateTaxFromPretax
+        pretaxBalance - withdrawals.fromPretax - (rothConversion?.conversionAmount ?? 0) - residualFromPretax
       );
       brokerageBalance = Math.max(
         0,
-        brokerageBalance - withdrawals.fromBrokerage - (rothConversion?.brokerageFundingAmount ?? 0) - stateTaxFromBrokerage
+        brokerageBalance - withdrawals.fromBrokerage - convTaxFromBrokerage - residualFromBrokerage
+          + excessIncomeToBrokerage
       );
       rothBalance = Math.max(
         0,
         rothBalance
           - withdrawals.fromRoth
           + (rothConversion?.conversionAmount ?? 0)
-          - (rothConversion?.rothFundingAmount ?? 0)
-          - stateTaxFromRoth
+          - convTaxFromRoth
+          - residualFromRoth
       );
       inheritedIraBalance = Math.max(0, inheritedIraBalance - inheritedDist);
       hsaBalance = Math.max(0, hsaBalance - fromHsa);
@@ -897,8 +1052,11 @@ export function runSimulation(
   const stateRateForStrategy = combinedRate > 0 && stateRate > 0
     ? Math.min(stateRate / combinedRate, 1)
     : 0;
-  const accumulationStateTaxReal = accumulationConversionTaxReal * stateRateForStrategy;
-  const accumulationFederalTaxReal = accumulationConversionTaxReal - accumulationStateTaxReal;
+  // Inherited-IRA distributions taken during accumulation share the same combined-rate split.
+  const accumulationStateTaxReal =
+    (accumulationConversionTaxReal + accumulationInheritedTaxReal) * stateRateForStrategy;
+  const accumulationFederalTaxReal =
+    accumulationConversionTaxReal + accumulationInheritedTaxReal - accumulationStateTaxReal;
 
   const lifetimeFederalTaxReal = retirementFederalTaxReal + accumulationFederalTaxReal;
   const lifetimeStateTaxReal   = retirementStateTaxReal   + accumulationStateTaxReal;
