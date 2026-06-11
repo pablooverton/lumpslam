@@ -16,7 +16,7 @@ import { runCoastStep, type CoastStepState } from './coast';
 import { FEDERAL_INCOME_TAX_BRACKETS_2025, STANDARD_DEDUCTION_2025, calculateSeniorDeduction, getBracketCeiling } from '../constants/tax-brackets';
 import { getAcaCliff } from '../constants/aca-thresholds';
 import { getRmdStartAge } from '../constants/rmd-tables';
-import { getStateInfo } from '../constants/states';
+import { calculateStateTax, getStateInfo } from '../constants/states';
 
 // Engine simulates everything in current-year (profile.currentYear) real dollars.
 // annualGrowthRate is REAL: 6% real ≈ 9% nominal at 3% inflation, the Boglehead 60/40 baseline.
@@ -37,9 +37,15 @@ export function runSimulation(
   // For backward compat: flat growthRate used in accumulation phase and as fallback
   const growthRate = baseGrowthRate;
   const householdSize = profile.acaHouseholdSize ?? 2;
-  const stateRate = profile.hasStateIncomeTax
-    ? (getStateInfo(profile.stateOfResidence)?.topMarginalRate ?? 0)
-    : 0;
+  const stateInfoResolved = profile.hasStateIncomeTax
+    ? getStateInfo(profile.stateOfResidence)
+    : undefined;
+  // Flat top-marginal rate — still used for the working-year fed/state split and the bridge
+  // heuristic. Year-by-year retirement state tax goes through stateTaxOn (progressive steps
+  // for states that define them; flat otherwise).
+  const stateRate = stateInfoResolved?.topMarginalRate ?? 0;
+  const stateTaxOn = (base: number): number =>
+    calculateStateTax(stateInfoResolved, base, profile.filingStatus);
 
   // Engine selection is deferred — see below after accumulation phase.
 
@@ -623,7 +629,7 @@ export function runSimulation(
       // stateRate is 0 unless the profile sets hasStateIncomeTax + stateOfResidence, so this is a
       // no-op for severed-residency scenarios (Korea/international keep stateRate 0).
       const stateTaxBase = Math.max(0, magiBase - ssIncludable);
-      const stateTax = stateTaxBase * stateRate;
+      const stateTax = stateTaxOn(stateTaxBase);
 
       // T6: lumpy expenses (e.g. rebuy a house) draw from brokerage first, Roth as overflow.
       //
@@ -717,7 +723,7 @@ export function runSimulation(
       const niit = calculateNiit(
         emergencyRealizedGains, magiBase + extraTaxableIncome, profile.filingStatus
       );
-      const extraStateTax = extraTaxableIncome * stateRate;
+      const extraStateTax = stateTaxOn(stateTaxBase + extraTaxableIncome) - stateTax;
       const extraTaxNeed = extraFederalTax + capitalGainsTax + niit + extraStateTax + earlyWithdrawalPenalty;
 
       const rothLeftAfterOutflow = Math.max(0, rothAvailable - rothOutflow);
@@ -999,10 +1005,12 @@ export function runSimulation(
       const niit = calculateNiit(brokerageRealizedGains, magiWithConversion, profile.filingStatus);
       const totalFederalLiability = totalOrdinaryLiability + capitalGainsTax + niit;
 
-      // State income tax on non-SS ordinary income at the state top marginal rate. stateRate is 0
-      // unless the profile is state-taxed, so this is a no-op for severed-residency profiles.
-      const stateTaxBase = Math.max(0, magi - totalSSAnnual * 0.85);
-      const stateTax = stateTaxBase * stateRate;
+      // State income tax on non-SS income (progressive steps where the state defines them).
+      // stateTaxOn is 0 unless the profile is state-taxed — no-op for severed residency.
+      // BUG FIX 2026-06-11 (#14): the conversion was previously excluded from this branch's
+      // state base; states tax conversions as ordinary income, same as federal.
+      const stateTaxBase = Math.max(0, magiWithConversion - totalSSAnnual * 0.85);
+      const stateTax = stateTaxOn(stateTaxBase);
 
       // Pre-59½ penalties: 10% on the pretax gap draw (unless the profile's exemption
       // applies) and on the penalized portions of the Roth spending draw. The tax-funding

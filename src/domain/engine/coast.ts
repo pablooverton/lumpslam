@@ -34,7 +34,7 @@ import {
   STANDARD_DEDUCTION_2025,
   getBracketCeiling,
 } from '../constants/tax-brackets';
-import { getStateInfo } from '../constants/states';
+import { calculateStateTax, getStateInfo } from '../constants/states';
 import {
   netAcaPremium,
   getAcaCliff,
@@ -162,10 +162,10 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
   // If profile maintains a US state domicile, state tax on US-source income applies.
   // US coast stays domiciled (e.g. NC); foreign coast typically severs to a no-tax domicile.
   // Profile.hasStateIncomeTax controls this.
-  const stateRate = profile.hasStateIncomeTax
-    ? getStateInfo(profile.stateOfResidence)?.topMarginalRate ?? 0
-    : 0;
-  const stateTax = usOrdinaryIncome * stateRate;
+  const coastStateInfo = profile.hasStateIncomeTax
+    ? getStateInfo(profile.stateOfResidence)
+    : undefined;
+  const stateTax = calculateStateTax(coastStateInfo, usOrdinaryIncome, profile.filingStatus);
 
   // ─── ACA net premium (US coast only) ─────────────────────────────────────
   // On the marketplace during the coast. MAGI = salary + conversion (SS not started; brokerage-
@@ -243,12 +243,11 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
           FEDERAL_INCOME_TAX_BRACKETS_2025
         ) - usFedTaxGross
       : 0;
-  const extraStateOnEarnings = rothEarningsDrawn * stateRate;
-
   // LTCG (2026-06-11): gains realized by the shortfall brokerage draw were previously never
   // taxed. They stack above ordinary taxable income (incl. any Roth-earnings income) on the
   // capital-gains schedule; standard deduction unused by ordinary income shelters gains
-  // first. State taxes gains as ordinary income. One-pass: funded below, not re-taxed.
+  // first. State taxes gains and earnings as ordinary income (progressive steps where the
+  // state defines them). One-pass: funded below, not re-taxed.
   const coastOrdinaryPreDeduction = usOrdinaryIncome + rothEarningsDrawn;
   const coastTaxableOrdinary = Math.max(0, coastOrdinaryPreDeduction - stdDeduction);
   const coastTaxableGains =
@@ -257,11 +256,15 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
   const niit = calculateNiit(
     capitalGains, coastOrdinaryPreDeduction + capitalGains, profile.filingStatus
   );
-  const stateTaxOnGains = capitalGains * stateRate;
+  const extraStateTax =
+    calculateStateTax(
+      coastStateInfo,
+      usOrdinaryIncome + rothEarningsDrawn + capitalGains,
+      profile.filingStatus
+    ) - stateTax;
 
   let extraLiabilityToFund =
-    earlyWithdrawalPenalty + extraFedOnEarnings + extraStateOnEarnings
-    + capitalGainsTax + niit + stateTaxOnGains;
+    earlyWithdrawalPenalty + extraFedOnEarnings + extraStateTax + capitalGainsTax + niit;
   if (extraLiabilityToFund > 0) {
     const extraFromBrokerage = Math.min(extraLiabilityToFund, state.brokerageBalance);
     const extraBasisRatio =
@@ -328,7 +331,7 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
     capitalGainsTax,
     rothConversionTax: 0,
     totalFederalTax: usFedTaxAfterFtc + extraFedOnEarnings + capitalGainsTax + niit,
-    stateTax: stateTax + extraStateOnEarnings + stateTaxOnGains,
+    stateTax: stateTax + extraStateTax,
     foreignTax,
     foreignTaxCredit,
     effectiveRate,
