@@ -24,6 +24,7 @@ import type {
 import { calculateForeignTax } from './foreign-tax';
 import { addConversionLot, drawFromRoth, type RothLedger } from './roth-ledger';
 import {
+  calculateLtcgTax,
   calculateOrdinaryIncomeTax,
   getMarginalRate,
 } from './tax-utils';
@@ -242,7 +243,20 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
         ) - usFedTaxGross
       : 0;
   const extraStateOnEarnings = rothEarningsDrawn * stateRate;
-  let extraLiabilityToFund = earlyWithdrawalPenalty + extraFedOnEarnings + extraStateOnEarnings;
+
+  // LTCG (2026-06-11): gains realized by the shortfall brokerage draw were previously never
+  // taxed. They stack above ordinary taxable income (incl. any Roth-earnings income) on the
+  // capital-gains schedule; standard deduction unused by ordinary income shelters gains
+  // first. State taxes gains as ordinary income. One-pass: funded below, not re-taxed.
+  const coastOrdinaryPreDeduction = usOrdinaryIncome + rothEarningsDrawn;
+  const coastTaxableOrdinary = Math.max(0, coastOrdinaryPreDeduction - stdDeduction);
+  const coastTaxableGains =
+    Math.max(0, coastOrdinaryPreDeduction + capitalGains - stdDeduction) - coastTaxableOrdinary;
+  const capitalGainsTax = calculateLtcgTax(coastTaxableGains, coastTaxableOrdinary, profile.filingStatus);
+  const stateTaxOnGains = capitalGains * stateRate;
+
+  let extraLiabilityToFund =
+    earlyWithdrawalPenalty + extraFedOnEarnings + extraStateOnEarnings + capitalGainsTax + stateTaxOnGains;
   if (extraLiabilityToFund > 0) {
     const extraFromBrokerage = Math.min(extraLiabilityToFund, state.brokerageBalance);
     const extraBasisRatio =
@@ -306,10 +320,10 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
 
   const taxLiability: TaxLiability = {
     ordinaryIncomeTax: usFedTaxAfterFtc + extraFedOnEarnings,
-    capitalGainsTax: 0, // Brokerage gains realized during draws aren't separately taxed for planning; conservative
+    capitalGainsTax,
     rothConversionTax: 0,
-    totalFederalTax: usFedTaxAfterFtc + extraFedOnEarnings,
-    stateTax: stateTax + extraStateOnEarnings,
+    totalFederalTax: usFedTaxAfterFtc + extraFedOnEarnings + capitalGainsTax,
+    stateTax: stateTax + extraStateOnEarnings + stateTaxOnGains,
     foreignTax,
     foreignTaxCredit,
     effectiveRate,
@@ -346,5 +360,6 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
     guardrailCutPct: 0,
     peakPortfolio: state.peakPortfolio,
     preFiftyNineHalfShortfall,
+    capitalGainsRealized: capitalGains,
   };
 }

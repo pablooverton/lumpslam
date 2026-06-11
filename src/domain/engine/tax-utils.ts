@@ -1,4 +1,9 @@
-import { FEDERAL_INCOME_TAX_BRACKETS_2025, type TaxBracket } from '../constants/tax-brackets';
+import {
+  FEDERAL_INCOME_TAX_BRACKETS_2025,
+  LTCG_BRACKETS_2025,
+  type CapGainsBracket,
+  type TaxBracket,
+} from '../constants/tax-brackets';
 
 export function calculateOrdinaryIncomeTax(
   taxableIncome: number,
@@ -19,6 +24,32 @@ export function calculateOrdinaryIncomeTax(
     if (remaining <= 0) break;
   }
 
+  return tax;
+}
+
+// Long-term capital gains stack ON TOP of ordinary taxable income: the gains occupy
+// [ordinaryTaxableIncome, ordinaryTaxableIncome + taxableGains] on the LTCG schedule
+// (0% / 15% / 20% by bracket). Ordinary income fills from the bottom, so conversions and
+// pretax draws push gains out of the 0% bracket — the interplay the planner needs to price.
+// Callers pass TAXABLE gains: any standard deduction unused by ordinary income shelters
+// gains first (taxableGains = max(0, ordMagi + gains − std) − max(0, ordMagi − std)).
+export function calculateLtcgTax(
+  taxableGains: number,
+  ordinaryTaxableIncome: number,
+  filingStatus: 'married_filing_jointly' | 'single',
+  brackets: CapGainsBracket[] = LTCG_BRACKETS_2025
+): number {
+  const floor = Math.max(0, ordinaryTaxableIncome);
+  const top = floor + Math.max(0, taxableGains);
+  let tax = 0;
+  let prevCeiling = 0;
+  for (const bracket of brackets) {
+    const ceiling = filingStatus === 'married_filing_jointly' ? bracket.ceilingMFJ : bracket.ceilingSingle;
+    const overlap = Math.max(0, Math.min(top, ceiling) - Math.max(floor, prevCeiling));
+    tax += overlap * bracket.rate;
+    prevCeiling = ceiling;
+    if (ceiling >= top) break;
+  }
   return tax;
 }
 

@@ -9,7 +9,7 @@ import { calculateRothConversion } from './roth-conversion';
 import { createRothLedger, addContribution, addConversionLot, drawFromRoth } from './roth-ledger';
 import { calculateRMD, projectInheritedIraDistributions } from './rmd';
 import { calculateBenefitAtClaimAge } from './social-security';
-import { calculateOrdinaryIncomeTax, getMarginalRate } from './tax-utils';
+import { calculateLtcgTax, calculateOrdinaryIncomeTax, getMarginalRate } from './tax-utils';
 import { calculateSpendingCapacity } from './spending-capacity';
 import { resolveSavingsStrategy, aggregateStrategyTotals, type ResolvedYearAllocation } from './savings-strategy';
 import { runCoastStep, type CoastStepState } from './coast';
@@ -684,13 +684,22 @@ export function runSimulation(
       const pretaxDrawPenalty = pretaxPenaltyRateAt(gatingAge) * emergencyPretaxDraw;
       const earlyWithdrawalPenalty = rothPenalty + pretaxDrawPenalty;
 
-      const extraTaxableIncome = emergencyPretaxDraw + emergencyRealizedGains + rothEarningsDrawn;
-      const taxableWithExtra = Math.max(0, magiBase + extraTaxableIncome - stdDeduction);
+      // Ordinary extras (emergency pretax draw, Roth-earnings income) raise the bracket
+      // floor; realized gains stack above it on the LTCG schedule (2026-06-11 — previously
+      // gains here escaped tax entirely, then briefly were ordinary-taxed). State taxes
+      // gains as ordinary income.
+      const extraOrdinaryIncome = emergencyPretaxDraw + rothEarningsDrawn;
+      const taxableWithExtra = Math.max(0, magiBase + extraOrdinaryIncome - stdDeduction);
       const extraFederalTax =
         calculateOrdinaryIncomeTax(taxableWithExtra, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025)
         - totalTax;
+      const taxableGains =
+        Math.max(0, magiBase + extraOrdinaryIncome + emergencyRealizedGains - stdDeduction) -
+        taxableWithExtra;
+      const capitalGainsTax = calculateLtcgTax(taxableGains, taxableWithExtra, profile.filingStatus);
+      const extraTaxableIncome = extraOrdinaryIncome + emergencyRealizedGains;
       const extraStateTax = extraTaxableIncome * stateRate;
-      const extraTaxNeed = extraFederalTax + extraStateTax + earlyWithdrawalPenalty;
+      const extraTaxNeed = extraFederalTax + capitalGainsTax + extraStateTax + earlyWithdrawalPenalty;
 
       const rothLeftAfterOutflow = Math.max(0, rothAvailable - rothOutflow);
       const extraFromRoth = Math.min(extraTaxNeed, rothLeftAfterOutflow);
@@ -709,19 +718,19 @@ export function runSimulation(
       const rothSpendingDraw = rothOutflow - rothFundingForTaxes;
 
       // Component split for reporting: ordinary tax is what the year would owe with no
-      // conversion; the conversion's share is the bracket-true increment on top. Sums to the
-      // single computed liability — no double count.
-      const totalFederalLiability = totalTax + extraFederalTax;
+      // conversion; the conversion's share is the bracket-true increment on top; gains are
+      // their own LTCG component. Sums to the single computed liability — no double count.
+      const totalFederalLiability = totalTax + extraFederalTax + capitalGainsTax;
       const taxableExConversion = Math.max(
         0,
-        magiBase + extraTaxableIncome - conversionAmount - stdDeduction
+        magiBase + extraOrdinaryIncome - conversionAmount - stdDeduction
       );
       const ordinaryIncomeTax = calculateOrdinaryIncomeTax(
         taxableExConversion,
         profile.filingStatus,
         FEDERAL_INCOME_TAX_BRACKETS_2025
       );
-      const rothConversionTax = totalFederalLiability - ordinaryIncomeTax;
+      const rothConversionTax = totalTax + extraFederalTax - ordinaryIncomeTax;
 
       rothConversion = {
         conversionAmount,
@@ -777,7 +786,7 @@ export function runSimulation(
       // State tax (stateTaxBase/stateTax computed above, where it is also funded from Roth).
       const taxLiability: TaxLiability = {
         ordinaryIncomeTax,
-        capitalGainsTax: 0, // realized gains taxed at ordinary rates inside ordinaryIncomeTax (LTCG = planned)
+        capitalGainsTax,
         rothConversionTax,
         totalFederalTax: totalFederalLiability,
         stateTax: stateTax + extraStateTax,
@@ -787,6 +796,7 @@ export function runSimulation(
       const preFiftyNineHalfShortfall = isPre59
         ? rothDrawComposition.fromUnseasonedConversions + rothDrawComposition.fromEarnings
         : 0;
+      const capitalGainsRealized = emergencyRealizedGains;
 
       yearlyProjections.push({
         year,
@@ -810,6 +820,7 @@ export function runSimulation(
         guardrailCutPct: currentGuardrailCutPct,
         peakPortfolio,
         preFiftyNineHalfShortfall,
+        capitalGainsRealized,
       });
       magiHistory.push(magi);
 
@@ -930,19 +941,29 @@ export function runSimulation(
       // MAGI (with conversion); the conversion's share is the bracket-true increment
       // tax(with) − tax(without), reported as a component of totalFederalTax rather than added
       // on top (the old form double-counted it in totalFederalTax/lifetime aggregates).
-      const taxableWithConversion = Math.max(0, magiWithConversion - stdDeduction);
-      const totalFederalLiability = calculateOrdinaryIncomeTax(
+      // LTCG (2026-06-11): realized brokerage gains stay in MAGI (ACA/IRMAA see them) but are
+      // taxed on the capital-gains schedule stacked above ordinary taxable income — previously
+      // they were taxed at ordinary rates. Standard deduction unused by ordinary income
+      // shelters gains first.
+      const ordinaryMagiWithConversion = magiWithConversion - brokerageRealizedGains;
+      const taxableWithConversion = Math.max(0, ordinaryMagiWithConversion - stdDeduction);
+      const totalOrdinaryLiability = calculateOrdinaryIncomeTax(
         taxableWithConversion,
         profile.filingStatus,
         FEDERAL_INCOME_TAX_BRACKETS_2025
       );
-      const taxableBase = Math.max(0, magi - stdDeduction);
+      const taxableBase = Math.max(0, magi - brokerageRealizedGains - stdDeduction);
       const ordinaryIncomeTax = calculateOrdinaryIncomeTax(
         taxableBase,
         profile.filingStatus,
         FEDERAL_INCOME_TAX_BRACKETS_2025
       );
-      const rothConversionTax = totalFederalLiability - ordinaryIncomeTax;
+      const rothConversionTax = totalOrdinaryLiability - ordinaryIncomeTax;
+      const taxableGains =
+        Math.max(0, ordinaryMagiWithConversion + brokerageRealizedGains - stdDeduction) -
+        taxableWithConversion;
+      const capitalGainsTax = calculateLtcgTax(taxableGains, taxableWithConversion, profile.filingStatus);
+      const totalFederalLiability = totalOrdinaryLiability + capitalGainsTax;
 
       // State income tax on non-SS ordinary income at the state top marginal rate. stateRate is 0
       // unless the profile is state-taxed, so this is a no-op for severed-residency profiles.
@@ -960,7 +981,7 @@ export function runSimulation(
 
       const taxLiability: TaxLiability = {
         ordinaryIncomeTax,
-        capitalGainsTax: 0,
+        capitalGainsTax,
         rothConversionTax,
         totalFederalTax: totalFederalLiability,
         stateTax,
@@ -971,6 +992,7 @@ export function runSimulation(
       const preFiftyNineHalfShortfall = isPre59
         ? rothDrawComposition.fromUnseasonedConversions + rothDrawComposition.fromEarnings
         : 0;
+      const capitalGainsRealized = brokerageRealizedGains;
 
       magi = magiWithConversion;
 
@@ -1008,7 +1030,7 @@ export function runSimulation(
       // is not grossed up — same documented simplification as the state-tax fix. Anything still
       // unfunded after pretax is true depletion; downstream depletion/probability checks flag it.
       let residualTax =
-        ordinaryIncomeTax + stateTax + earlyWithdrawalPenalty
+        ordinaryIncomeTax + capitalGainsTax + stateTax + earlyWithdrawalPenalty
         + (rothConversionTax - convTaxFromBrokerage - convTaxFromRoth);
 
       // BUG FIX 2026-06-11: excess cash income over spending (large-RMD years, SS above spending)
@@ -1081,6 +1103,7 @@ export function runSimulation(
         guardrailCutPct: currentGuardrailCutPct,
         peakPortfolio,
         preFiftyNineHalfShortfall,
+        capitalGainsRealized,
       });
       magiHistory.push(magi);
     }

@@ -21,7 +21,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { runSimulation } from '../../src/domain/engine/simulation-runner';
-import { calculateOrdinaryIncomeTax } from '../../src/domain/engine/tax-utils';
+import { calculateLtcgTax, calculateOrdinaryIncomeTax } from '../../src/domain/engine/tax-utils';
 import { FEDERAL_INCOME_TAX_BRACKETS_2025, STANDARD_DEDUCTION_2025 } from '../../src/domain/constants/tax-brackets';
 import { deriveAssetTotals } from '../../src/domain/types/assets';
 import type { Account } from '../../src/domain/types/assets';
@@ -88,21 +88,24 @@ function conservationViolations(
   return violations;
 }
 
-/** Per-year reported federal tax must equal bracket math on reported MAGI — no double count. */
+/** Per-year reported federal tax must equal bracket math on reported MAGI — no double count.
+ *  Realized gains (reported via capitalGainsRealized) are excluded from the ordinary base and
+ *  recomputed on the LTCG schedule stacked above it; unused standard deduction shelters gains. */
 function taxIdentityViolations(result: ScenarioResult, profile: ClientProfile, tolerance = 1): string[] {
   const std = STANDARD_DEDUCTION_2025[profile.filingStatus];
   const violations: string[] = [];
   for (const p of result.yearlyProjections) {
     if (p.season === 'coast') continue; // coast nets FTC against US tax; identity is fed-after-FTC
-    const recomputed = calculateOrdinaryIncomeTax(
-      Math.max(0, p.magi - std),
-      profile.filingStatus,
-      FEDERAL_INCOME_TAX_BRACKETS_2025
-    );
+    const gains = p.capitalGainsRealized ?? 0;
+    const taxableOrdinary = Math.max(0, p.magi - gains - std);
+    const taxableGains = Math.max(0, p.magi - std) - taxableOrdinary;
+    const recomputed =
+      calculateOrdinaryIncomeTax(taxableOrdinary, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025) +
+      calculateLtcgTax(taxableGains, taxableOrdinary, profile.filingStatus);
     if (Math.abs(p.taxLiability.totalFederalTax - recomputed) >= tolerance) {
       violations.push(
         `${p.year} (age ${p.clientAge}): totalFederalTax ${p.taxLiability.totalFederalTax.toFixed(2)} ≠ ` +
-          `bracket tax on MAGI−std ${recomputed.toFixed(2)}`
+          `ordinary+LTCG recompute ${recomputed.toFixed(2)}`
       );
     }
   }

@@ -74,4 +74,7 @@ export interface YearlyProjection {
    *  sources (contribution basis + seasoned conversions) — i.e. the bridge gap funded from
    *  unseasoned conversions or earnings at a 10% penalty. 0 once the older spouse is 59½. */
   preFiftyNineHalfShortfall?: number;
+  /** Long-term gains realized by this year's brokerage draws (gross, pre-deduction). In MAGI
+   *  for ACA/IRMAA; taxed on the LTCG schedule stacked above ordinary income. */
+  capitalGainsRealized?: number;
 }
