@@ -53,6 +53,21 @@ export function calculateLtcgTax(
   return tax;
 }
 
+// Net Investment Income Tax: 3.8% on investment income above the MAGI threshold
+// ($250k MFJ / $200k single). The thresholds are statutorily NOT inflation-indexed; the
+// real-internal engine treats them as real-sticky like everything else — a documented,
+// slightly optimistic simplification (in reality the unindexed threshold bites more over
+// time). The engine's modeled investment income is realized capital gains.
+export function calculateNiit(
+  investmentIncome: number,
+  magi: number,
+  filingStatus: 'married_filing_jointly' | 'single'
+): number {
+  const threshold = filingStatus === 'married_filing_jointly' ? 250_000 : 200_000;
+  const base = Math.min(Math.max(0, investmentIncome), Math.max(0, magi - threshold));
+  return 0.038 * base;
+}
+
 // Returns the marginal rate that applies at a given income level
 export function getMarginalRate(
   taxableIncome: number,

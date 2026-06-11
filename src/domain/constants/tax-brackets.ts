@@ -4,12 +4,33 @@ export interface TaxBracket {
   ceilingSingle: number;
 }
 
-// Standard deduction (2025). Applied before bracket calculation.
-// IRS indexes these to inflation, so they represent "real" 2025 amounts.
+// Standard deduction (2025, post-OBBBA). Applied before bracket calculation.
+// OBBBA (signed 2025-07-04) raised the 2025 MFJ standard deduction to $31,500
+// ($15,750 single) and made the TCJA bracket structure permanent. IRS indexes these to
+// inflation, so they represent "real" 2025 amounts (real-sticky in the engine).
 export const STANDARD_DEDUCTION_2025 = {
-  married_filing_jointly: 30_000,
-  single: 15_000,
+  married_filing_jointly: 31_500,
+  single: 15_750,
 } as const;
+
+// OBBBA senior deduction: $6,000 per person aged 65+, tax years 2025–2028 only,
+// phased out at 6% of MAGI above $150k MFJ / $75k single. Modeled on the calendar
+// year (engine year = calendar year), so it simply stops after 2028.
+export const OBBBA_SENIOR_DEDUCTION_PER_PERSON = 6_000;
+export const OBBBA_SENIOR_DEDUCTION_LAST_YEAR = 2028;
+
+export function calculateSeniorDeduction(
+  year: number,
+  filingStatus: 'married_filing_jointly' | 'single',
+  magi: number,
+  personsAged65Plus: number
+): number {
+  if (year > OBBBA_SENIOR_DEDUCTION_LAST_YEAR || personsAged65Plus <= 0) return 0;
+  const threshold = filingStatus === 'married_filing_jointly' ? 150_000 : 75_000;
+  const base = OBBBA_SENIOR_DEDUCTION_PER_PERSON * personsAged65Plus;
+  const phaseOut = Math.max(0, (magi - threshold) * 0.06);
+  return Math.max(0, base - phaseOut);
+}
 
 // Return the taxable-income ceiling for a given bracket rate and filing status.
 // Used by the conversion engine to compute how much headroom remains before the next bracket.

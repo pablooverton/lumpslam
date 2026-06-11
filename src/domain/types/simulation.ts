@@ -36,6 +36,9 @@ export interface TaxLiability {
    *  draws, Roth-earnings draws). Reported separately from totalFederalTax so bracket math
    *  stays verifiable; funded from the portfolio like any other tax. */
   earlyWithdrawalPenalty?: number;
+  /** Net Investment Income Tax (3.8% on gains above the $250k/$200k MAGI threshold).
+   *  Included in totalFederalTax. */
+  niit?: number;
 }
 
 export interface RothConversionEvent {

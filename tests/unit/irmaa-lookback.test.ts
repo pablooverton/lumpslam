@@ -32,6 +32,14 @@ describe('calculateIrmaaSurcharge — lookback semantics', () => {
     const single = calculateIrmaaSurcharge(110_000, 'single');
     expect(single).toBeCloseTo(couple / 2, 0);
   });
+
+  it('MFJ with only one spouse on Medicare is surcharged for one person, not two', () => {
+    const both = calculateIrmaaSurcharge(220_000, 'married_filing_jointly', 2);
+    const clientOnly = calculateIrmaaSurcharge(220_000, 'married_filing_jointly', 1);
+    expect(clientOnly).toBeCloseTo(both / 2, 6);
+    // omitted count preserves the old MFJ=2 default
+    expect(calculateIrmaaSurcharge(220_000, 'married_filing_jointly')).toBeCloseTo(both, 6);
+  });
 });
 
 describe('classifyIrmaaTier — tier introspection', () => {

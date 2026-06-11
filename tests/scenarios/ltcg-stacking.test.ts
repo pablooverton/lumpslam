@@ -154,7 +154,8 @@ describe('LTCG — conversion_primary lumpy brokerage draw pays 15% above a 22% 
   it('the $25k of lumpy gains stacks above the 22%-filled floor at 15%', () => {
     expect(y.capitalGainsRealized).toBeCloseTo(25_000, 0);
     expect(y.taxLiability.capitalGainsTax).toBeCloseTo(3_750, 0);
-    expect(y.magi).toBeCloseTo(236_700 + 25_000, 0); // conversion fill + gains
+    // conversion fill (22% ceiling + post-OBBBA std deduction) + gains
+    expect(y.magi).toBeCloseTo(206_700 + 31_500 + 25_000, 0);
   });
 
   it('the gains tax is funded — the year conserves to the dollar (growth=0)', () => {

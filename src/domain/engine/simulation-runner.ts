@@ -9,11 +9,11 @@ import { calculateRothConversion } from './roth-conversion';
 import { createRothLedger, addContribution, addConversionLot, drawFromRoth } from './roth-ledger';
 import { calculateRMD, projectInheritedIraDistributions } from './rmd';
 import { calculateBenefitAtClaimAge } from './social-security';
-import { calculateLtcgTax, calculateOrdinaryIncomeTax, getMarginalRate } from './tax-utils';
+import { calculateLtcgTax, calculateNiit, calculateOrdinaryIncomeTax, getMarginalRate } from './tax-utils';
 import { calculateSpendingCapacity } from './spending-capacity';
 import { resolveSavingsStrategy, aggregateStrategyTotals, type ResolvedYearAllocation } from './savings-strategy';
 import { runCoastStep, type CoastStepState } from './coast';
-import { FEDERAL_INCOME_TAX_BRACKETS_2025, STANDARD_DEDUCTION_2025, getBracketCeiling } from '../constants/tax-brackets';
+import { FEDERAL_INCOME_TAX_BRACKETS_2025, STANDARD_DEDUCTION_2025, calculateSeniorDeduction, getBracketCeiling } from '../constants/tax-brackets';
 import { getAcaCliff } from '../constants/aca-thresholds';
 import { getRmdStartAge } from '../constants/rmd-tables';
 import { getStateInfo } from '../constants/states';
@@ -438,6 +438,10 @@ export function runSimulation(
 
     const season = classifySeasonForYear(year, profile, cobraEndYear);
 
+    // OBBBA senior deduction (2025–2028): persons aged 65+ this year. The deduction itself
+    // is MAGI-phase-out dependent and computed in each branch's tax math.
+    const personsAged65Plus = (clientAge >= 65 ? 1 : 0) + ((spouseAge ?? 0) >= 65 ? 1 : 0);
+
     // T5: one-time cash injections (house sale proceeds, inheritance) land in brokerage
     // at the start of the year, before withdrawals/conversions. Amount is in real dollars.
     const oneTimeIncomeThisYear = (spending.oneTimeIncomes ?? [])
@@ -602,7 +606,13 @@ export function runSimulation(
       // MAGI = conversion + RMD + SS (85% includable) + inherited IRA distributions + taxable injection
       const magiBase = conversionAmount + rmd + ssIncludable + inheritedDist + taxableOneTimeIncome;
 
-      const taxableIncome = Math.max(0, magiBase - stdDeduction);
+      // OBBBA senior deduction on the base liability (re-derived from the final MAGI in the
+      // one-pass extra block below; conversion sizing keeps the plain standard deduction —
+      // slightly conservative under-fill in 65+ years through 2028).
+      const seniorDeductionBase = calculateSeniorDeduction(
+        year, profile.filingStatus, magiBase, personsAged65Plus
+      );
+      const taxableIncome = Math.max(0, magiBase - stdDeduction - seniorDeductionBase);
       const totalTax = calculateOrdinaryIncomeTax(taxableIncome, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025);
       const marginalRate = getMarginalRate(taxableIncome, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025);
 
@@ -687,19 +697,28 @@ export function runSimulation(
       // Ordinary extras (emergency pretax draw, Roth-earnings income) raise the bracket
       // floor; realized gains stack above it on the LTCG schedule (2026-06-11 — previously
       // gains here escaped tax entirely, then briefly were ordinary-taxed). State taxes
-      // gains as ordinary income.
+      // gains as ordinary income. The senior deduction is re-derived from the final MAGI;
+      // the extra-tax increment absorbs any difference from the base pass.
       const extraOrdinaryIncome = emergencyPretaxDraw + rothEarningsDrawn;
-      const taxableWithExtra = Math.max(0, magiBase + extraOrdinaryIncome - stdDeduction);
+      const extraTaxableIncome = extraOrdinaryIncome + emergencyRealizedGains;
+      const seniorDeduction = calculateSeniorDeduction(
+        year, profile.filingStatus, magiBase + extraTaxableIncome, personsAged65Plus
+      );
+      const taxableWithExtra = Math.max(
+        0, magiBase + extraOrdinaryIncome - stdDeduction - seniorDeduction
+      );
       const extraFederalTax =
         calculateOrdinaryIncomeTax(taxableWithExtra, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025)
         - totalTax;
       const taxableGains =
-        Math.max(0, magiBase + extraOrdinaryIncome + emergencyRealizedGains - stdDeduction) -
+        Math.max(0, magiBase + extraOrdinaryIncome + emergencyRealizedGains - stdDeduction - seniorDeduction) -
         taxableWithExtra;
       const capitalGainsTax = calculateLtcgTax(taxableGains, taxableWithExtra, profile.filingStatus);
-      const extraTaxableIncome = extraOrdinaryIncome + emergencyRealizedGains;
+      const niit = calculateNiit(
+        emergencyRealizedGains, magiBase + extraTaxableIncome, profile.filingStatus
+      );
       const extraStateTax = extraTaxableIncome * stateRate;
-      const extraTaxNeed = extraFederalTax + capitalGainsTax + extraStateTax + earlyWithdrawalPenalty;
+      const extraTaxNeed = extraFederalTax + capitalGainsTax + niit + extraStateTax + earlyWithdrawalPenalty;
 
       const rothLeftAfterOutflow = Math.max(0, rothAvailable - rothOutflow);
       const extraFromRoth = Math.min(extraTaxNeed, rothLeftAfterOutflow);
@@ -720,10 +739,10 @@ export function runSimulation(
       // Component split for reporting: ordinary tax is what the year would owe with no
       // conversion; the conversion's share is the bracket-true increment on top; gains are
       // their own LTCG component. Sums to the single computed liability — no double count.
-      const totalFederalLiability = totalTax + extraFederalTax + capitalGainsTax;
+      const totalFederalLiability = totalTax + extraFederalTax + capitalGainsTax + niit;
       const taxableExConversion = Math.max(
         0,
-        magiBase + extraOrdinaryIncome - conversionAmount - stdDeduction
+        magiBase + extraOrdinaryIncome - conversionAmount - stdDeduction - seniorDeduction
       );
       const ordinaryIncomeTax = calculateOrdinaryIncomeTax(
         taxableExConversion,
@@ -776,11 +795,14 @@ export function runSimulation(
 
       const portfolioEnd = pretaxBalance + rothBalance + brokerageBalance + inheritedIraBalance + hsaBalance;
 
-      // ACA eligibility uses conversion-driven MAGI (may be over cliff — expected for this strategy)
-      const acaResult = season === 'aca' ? assessAcaEligibility(magi, householdSize) : null;
+      // ACA eligibility uses conversion-driven MAGI (may be over cliff — expected for this
+      // strategy), with the non-taxable 15% of SS added back (ACA MAGI counts 100% of SS).
+      const acaResult = season === 'aca'
+        ? assessAcaEligibility(magi + totalSSAnnual * 0.15, householdSize)
+        : null;
       const irmaaSurcharge =
         season === 'medicare' || season === 'rmd'
-          ? calculateIrmaaSurcharge(getLookbackMagi(magi), profile.filingStatus)
+          ? calculateIrmaaSurcharge(getLookbackMagi(magi), profile.filingStatus, personsAged65Plus)
           : 0;
 
       // State tax (stateTaxBase/stateTax computed above, where it is also funded from Roth).
@@ -792,6 +814,7 @@ export function runSimulation(
         stateTax: stateTax + extraStateTax,
         effectiveRate: magi > 0 ? totalFederalLiability / magi : 0,
         earlyWithdrawalPenalty,
+        niit,
       };
       const preFiftyNineHalfShortfall = isPre59
         ? rothDrawComposition.fromUnseasonedConversions + rothDrawComposition.fromEarnings
@@ -853,7 +876,9 @@ export function runSimulation(
         // Roth is pulled before pretax when brokerage's MAGI impact would otherwise exceed the
         // cliff — this captures the video-informed "Roth as ACA bridge" strategy.
         const ACA_CLIFF = getAcaCliff(householdSize);
-        const passiveMagi = inheritedDist + totalSSAnnual * 0.85;
+        // ACA MAGI counts 100% of Social Security — the non-taxable portion is added back
+        // (85% is the income-tax inclusion cap only). Bites ACA years with early-claimed SS.
+        const passiveMagi = inheritedDist + totalSSAnnual + taxableOneTimeIncome;
         const totalMagiHeadroom = Math.max(0, ACA_CLIFF - passiveMagi - 1);
         // How much brokerage can we pull before its gains alone exhaust the cliff?
         const brokerageCapByMagi =
@@ -898,7 +923,9 @@ export function runSimulation(
         pretaxWithdrawals: fromPretax + rmd,
         rothConversionAmount: 0,
         capitalGainsRealized: brokerageRealizedGains,
-        otherIncome: inheritedDist + rothEarningsDrawn,
+        // BUG FIX 2026-06-11: taxable one-time injections previously escaped MAGI and tax
+        // entirely in this branch (conversion-primary handled them).
+        otherIncome: inheritedDist + rothEarningsDrawn + taxableOneTimeIncome,
       });
 
       if ((season === 'cobra' || season === 'international' || season === 'self_insure' || season === 'medicare' || season === 'rmd') && pretaxBalance > 0) {
@@ -923,12 +950,14 @@ export function runSimulation(
       const magiWithConversion = magi + (rothConversion?.conversionAmount ?? 0);
       if (rothConversion) addConversionLot(rothLedger, year, rothConversion.conversionAmount);
 
+      // ACA assessment adds back the non-taxable 15% of SS (ACA MAGI counts 100% of SS);
+      // the reported magi stays tax-MAGI (85% SS) for bracket math and the IRMAA lookback.
       const acaResult = season === 'aca'
-        ? assessAcaEligibility(magiWithConversion, householdSize)
+        ? assessAcaEligibility(magiWithConversion + totalSSAnnual * 0.15, householdSize)
         : null;
       const irmaaSurcharge =
         season === 'medicare' || season === 'rmd'
-          ? calculateIrmaaSurcharge(getLookbackMagi(magiWithConversion), profile.filingStatus)
+          ? calculateIrmaaSurcharge(getLookbackMagi(magiWithConversion), profile.filingStatus, personsAged65Plus)
           : 0;
 
       // Real-internal: MAGI is already in current-year real dollars; tax brackets and the
@@ -943,16 +972,20 @@ export function runSimulation(
       // on top (the old form double-counted it in totalFederalTax/lifetime aggregates).
       // LTCG (2026-06-11): realized brokerage gains stay in MAGI (ACA/IRMAA see them) but are
       // taxed on the capital-gains schedule stacked above ordinary taxable income — previously
-      // they were taxed at ordinary rates. Standard deduction unused by ordinary income
-      // shelters gains first.
+      // they were taxed at ordinary rates. Deductions (standard + OBBBA senior) unused by
+      // ordinary income shelter gains first.
+      const seniorDeduction = calculateSeniorDeduction(
+        year, profile.filingStatus, magiWithConversion, personsAged65Plus
+      );
+      const deduction = stdDeduction + seniorDeduction;
       const ordinaryMagiWithConversion = magiWithConversion - brokerageRealizedGains;
-      const taxableWithConversion = Math.max(0, ordinaryMagiWithConversion - stdDeduction);
+      const taxableWithConversion = Math.max(0, ordinaryMagiWithConversion - deduction);
       const totalOrdinaryLiability = calculateOrdinaryIncomeTax(
         taxableWithConversion,
         profile.filingStatus,
         FEDERAL_INCOME_TAX_BRACKETS_2025
       );
-      const taxableBase = Math.max(0, magi - brokerageRealizedGains - stdDeduction);
+      const taxableBase = Math.max(0, magi - brokerageRealizedGains - deduction);
       const ordinaryIncomeTax = calculateOrdinaryIncomeTax(
         taxableBase,
         profile.filingStatus,
@@ -960,10 +993,11 @@ export function runSimulation(
       );
       const rothConversionTax = totalOrdinaryLiability - ordinaryIncomeTax;
       const taxableGains =
-        Math.max(0, ordinaryMagiWithConversion + brokerageRealizedGains - stdDeduction) -
+        Math.max(0, ordinaryMagiWithConversion + brokerageRealizedGains - deduction) -
         taxableWithConversion;
       const capitalGainsTax = calculateLtcgTax(taxableGains, taxableWithConversion, profile.filingStatus);
-      const totalFederalLiability = totalOrdinaryLiability + capitalGainsTax;
+      const niit = calculateNiit(brokerageRealizedGains, magiWithConversion, profile.filingStatus);
+      const totalFederalLiability = totalOrdinaryLiability + capitalGainsTax + niit;
 
       // State income tax on non-SS ordinary income at the state top marginal rate. stateRate is 0
       // unless the profile is state-taxed, so this is a no-op for severed-residency profiles.
@@ -988,6 +1022,7 @@ export function runSimulation(
         effectiveRate:
           magiWithConversion > 0 ? totalFederalLiability / magiWithConversion : 0,
         earlyWithdrawalPenalty,
+        niit,
       };
       const preFiftyNineHalfShortfall = isPre59
         ? rothDrawComposition.fromUnseasonedConversions + rothDrawComposition.fromEarnings
@@ -1030,7 +1065,7 @@ export function runSimulation(
       // is not grossed up — same documented simplification as the state-tax fix. Anything still
       // unfunded after pretax is true depletion; downstream depletion/probability checks flag it.
       let residualTax =
-        ordinaryIncomeTax + capitalGainsTax + stateTax + earlyWithdrawalPenalty
+        ordinaryIncomeTax + capitalGainsTax + niit + stateTax + earlyWithdrawalPenalty
         + (rothConversionTax - convTaxFromBrokerage - convTaxFromRoth);
 
       // BUG FIX 2026-06-11: excess cash income over spending (large-RMD years, SS above spending)

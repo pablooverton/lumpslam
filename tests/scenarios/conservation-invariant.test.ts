@@ -21,8 +21,12 @@
  */
 import { describe, it, expect } from 'vitest';
 import { runSimulation } from '../../src/domain/engine/simulation-runner';
-import { calculateLtcgTax, calculateOrdinaryIncomeTax } from '../../src/domain/engine/tax-utils';
-import { FEDERAL_INCOME_TAX_BRACKETS_2025, STANDARD_DEDUCTION_2025 } from '../../src/domain/constants/tax-brackets';
+import { calculateLtcgTax, calculateNiit, calculateOrdinaryIncomeTax } from '../../src/domain/engine/tax-utils';
+import {
+  FEDERAL_INCOME_TAX_BRACKETS_2025,
+  STANDARD_DEDUCTION_2025,
+  calculateSeniorDeduction,
+} from '../../src/domain/constants/tax-brackets';
 import { deriveAssetTotals } from '../../src/domain/types/assets';
 import type { Account } from '../../src/domain/types/assets';
 import type { ClientProfile, PersonProfile } from '../../src/domain/types/profile';
@@ -96,12 +100,16 @@ function taxIdentityViolations(result: ScenarioResult, profile: ClientProfile, t
   const violations: string[] = [];
   for (const p of result.yearlyProjections) {
     if (p.season === 'coast') continue; // coast nets FTC against US tax; identity is fed-after-FTC
+    const persons65 = (p.clientAge >= 65 ? 1 : 0) + ((p.spouseAge ?? 0) >= 65 ? 1 : 0);
+    const deduction =
+      std + calculateSeniorDeduction(p.year, profile.filingStatus, p.magi, persons65);
     const gains = p.capitalGainsRealized ?? 0;
-    const taxableOrdinary = Math.max(0, p.magi - gains - std);
-    const taxableGains = Math.max(0, p.magi - std) - taxableOrdinary;
+    const taxableOrdinary = Math.max(0, p.magi - gains - deduction);
+    const taxableGains = Math.max(0, p.magi - deduction) - taxableOrdinary;
     const recomputed =
       calculateOrdinaryIncomeTax(taxableOrdinary, profile.filingStatus, FEDERAL_INCOME_TAX_BRACKETS_2025) +
-      calculateLtcgTax(taxableGains, taxableOrdinary, profile.filingStatus);
+      calculateLtcgTax(taxableGains, taxableOrdinary, profile.filingStatus) +
+      calculateNiit(gains, p.magi, profile.filingStatus);
     if (Math.abs(p.taxLiability.totalFederalTax - recomputed) >= tolerance) {
       violations.push(
         `${p.year} (age ${p.clientAge}): totalFederalTax ${p.taxLiability.totalFederalTax.toFixed(2)} ≠ ` +
@@ -160,10 +168,14 @@ describe('conservation — review probe A (withdrawal_sequencing, medicare year)
   const spending = bareSpending(100_000);
   const result = runSimulation(profile, deriveAssetTotals(accounts, 0), spending, NEVER_TRIGGER_GUARDRAILS, 'retire_at_stated_date');
 
-  it('funds the $7,923 federal tax from the portfolio (was: reported but never deducted)', () => {
+  it('funds the federal tax from the portfolio (was: reported but never deducted)', () => {
+    // Review repro showed $7,923 unfunded under pre-OBBBA constants ($30k std deduction).
+    // Re-derived 2026-06-11 under post-OBBBA law: $31.5k std + $6k senior (age 66, 2026,
+    // MAGI under the phase-out) → tax(100k − 37.5k) = $7,023. The conservation property,
+    // not the dollar figure, is the regression being pinned.
     const y = result.yearlyProjections[0];
-    expect(y.taxLiability.totalFederalTax).toBeCloseTo(7_923, 0);
-    expect(y.portfolioStartBalance - y.portfolioEndBalance).toBeCloseTo(107_923, 0);
+    expect(y.taxLiability.totalFederalTax).toBeCloseTo(7_023, 0);
+    expect(y.portfolioStartBalance - y.portfolioEndBalance).toBeCloseTo(107_023, 0);
   });
 
   expectInvariants(result, profile, spending);
@@ -191,9 +203,12 @@ describe('conservation — review probe B (conversion_primary, RMD year)', () =>
   const result = runSimulation(profile, deriveAssetTotals(accounts, 0), spending, NEVER_TRIGGER_GUARDRAILS, 'retire_at_stated_date');
 
   it('RMD proceeds fund spending instead of vanishing (drop = spend + tax exactly)', () => {
+    // Review repro: drop was $216,603 (the $81,301 RMD vanished). Re-derived under
+    // post-OBBBA law (std $31.5k; senior deduction mostly phased out at this MAGI):
+    // tax ≈ $35,146 → drop = 100,000 + 35,146. The conserved-RMD property is the pin.
     const y = result.yearlyProjections[0];
     expect(y.income.requiredMinimumDistribution).toBeCloseTo(81_301, 0);
-    expect(y.portfolioStartBalance - y.portfolioEndBalance).toBeCloseTo(135_302, 0);
+    expect(y.portfolioStartBalance - y.portfolioEndBalance).toBeCloseTo(135_146, 0);
   });
 
   expectInvariants(result, profile, spending);

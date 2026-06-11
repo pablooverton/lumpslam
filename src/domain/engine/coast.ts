@@ -25,6 +25,7 @@ import { calculateForeignTax } from './foreign-tax';
 import { addConversionLot, drawFromRoth, type RothLedger } from './roth-ledger';
 import {
   calculateLtcgTax,
+  calculateNiit,
   calculateOrdinaryIncomeTax,
   getMarginalRate,
 } from './tax-utils';
@@ -253,10 +254,14 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
   const coastTaxableGains =
     Math.max(0, coastOrdinaryPreDeduction + capitalGains - stdDeduction) - coastTaxableOrdinary;
   const capitalGainsTax = calculateLtcgTax(coastTaxableGains, coastTaxableOrdinary, profile.filingStatus);
+  const niit = calculateNiit(
+    capitalGains, coastOrdinaryPreDeduction + capitalGains, profile.filingStatus
+  );
   const stateTaxOnGains = capitalGains * stateRate;
 
   let extraLiabilityToFund =
-    earlyWithdrawalPenalty + extraFedOnEarnings + extraStateOnEarnings + capitalGainsTax + stateTaxOnGains;
+    earlyWithdrawalPenalty + extraFedOnEarnings + extraStateOnEarnings
+    + capitalGainsTax + niit + stateTaxOnGains;
   if (extraLiabilityToFund > 0) {
     const extraFromBrokerage = Math.min(extraLiabilityToFund, state.brokerageBalance);
     const extraBasisRatio =
@@ -322,12 +327,13 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
     ordinaryIncomeTax: usFedTaxAfterFtc + extraFedOnEarnings,
     capitalGainsTax,
     rothConversionTax: 0,
-    totalFederalTax: usFedTaxAfterFtc + extraFedOnEarnings + capitalGainsTax,
+    totalFederalTax: usFedTaxAfterFtc + extraFedOnEarnings + capitalGainsTax + niit,
     stateTax: stateTax + extraStateOnEarnings + stateTaxOnGains,
     foreignTax,
     foreignTaxCredit,
     effectiveRate,
     earlyWithdrawalPenalty,
+    niit,
   };
 
   // MAGI for US ACA purposes. Foreign coast: abroad, not on ACA. US coast: drives eligibility.

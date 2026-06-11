@@ -91,7 +91,13 @@ export function assessAcaEligibility(magi: number, householdSize = 2): AcaEligib
 // as a fallback for the first two years of Medicare when no lookback is available yet.
 export function calculateIrmaaSurcharge(
   lookbackMagi: number,
-  filingStatus: 'married_filing_jointly' | 'single'
+  filingStatus: 'married_filing_jointly' | 'single',
+  /** People actually on Medicare (65+) this year. IRMAA accrues per enrolled person — a
+   *  60-year-old spouse of a 66-year-old client is not yet surcharged (2026-06-11 fix;
+   *  previously MFJ always charged 2). Defaults to the old filing-status behavior when
+   *  omitted. Season classification itself stays keyed to the client's age — a younger
+   *  spouse's own post-65 ACA years remain a documented simplification. */
+  personsOnMedicare?: number
 ): number {
   let surcharge = 0;
   for (const bracket of [...IRMAA_BRACKETS_2025].reverse()) {
@@ -100,8 +106,7 @@ export function calculateIrmaaSurcharge(
         ? bracket.magiFloorMFJ
         : bracket.magiFloorSingle;
     if (lookbackMagi >= floor) {
-      // Two people on Medicare (couple)
-      const people = filingStatus === 'married_filing_jointly' ? 2 : 1;
+      const people = personsOnMedicare ?? (filingStatus === 'married_filing_jointly' ? 2 : 1);
       surcharge =
         (bracket.partBSurchargePerPerson + bracket.partDSurchargePerPerson) * people * 12;
       break;
