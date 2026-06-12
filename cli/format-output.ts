@@ -339,6 +339,9 @@ export function printContingency(report: ContingencyReport, profile: ClientProfi
     console.log(`  ${B}If ${other} passes first → ${survivor} survives${RS}`);
     console.log(`  SS income lost:          ${R}${usd(w.incomeLostFromSS)}/yr${RS}`);
     console.log(`  Income after loss:       ${usd(w.incomeAfterLoss)}/yr`);
+    console.log(`  At-death portfolio:      ${usd(w.atDeathPortfolio)} (${w.atDeathYear}, survivor age ${w.survivorAgeAtDeath})`);
+    console.log(`  Survivor need (80%):     ${usd(w.survivorSpendingNeed)}/yr`);
+    console.log(`  Widow's penalty tax:     ${R}${usd(w.annualWidowsPenaltyTax)}/yr${RS}${w.survivorIrmaaSurcharge > 0 ? ` ${R}+ ${usd(w.survivorIrmaaSurcharge)}/yr IRMAA (single thresholds)${RS}` : ''}`);
     const coverColor = w.survivorCoveragePercent >= 0.9 ? G : Y;
     console.log(`  Survivor coverage:       ${coverColor}${pct(w.survivorCoveragePercent)}${RS}${w.canMaintainLifestyle ? ` ${G}(maintains lifestyle)${RS}` : ` ${Y}(may need adjustment)${RS}`}`);
     console.log(`  ${DIM}${w.singleFilerBracketNote}${RS}`);

@@ -77,7 +77,17 @@ export default function ContingencyPage() {
                 <Fact label="Income Lost (SS)" value={formatCurrency(w.incomeLostFromSS)} />
                 <Fact label="Income After Loss" value={formatCurrency(w.incomeAfterLoss)} />
                 <Fact
-                  label="Survivor Coverage"
+                  label={`At-Death Portfolio (${w.atDeathYear})`}
+                  value={formatCurrency(w.atDeathPortfolio)}
+                />
+                <Fact label="Survivor Need (80%)" value={formatCurrency(w.survivorSpendingNeed)} />
+                <Fact
+                  label="Widow's Penalty Tax / yr"
+                  value={formatCurrency(w.annualWidowsPenaltyTax + w.survivorIrmaaSurcharge)}
+                  valueClass="text-red-400"
+                />
+                <Fact
+                  label="Survivor Coverage (net of tax)"
                   value={formatPercent(w.survivorCoveragePercent)}
                   valueClass={
                     w.survivorCoveragePercent >= 0.9 ? 'text-green-400' : 'text-yellow-400'

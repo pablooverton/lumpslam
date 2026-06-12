@@ -399,7 +399,7 @@ The combined effect is severe: the same income that sat in the 22% bracket as MF
 - Aggressive pre-death Roth conversions (pay tax at MFJ rates now, distribute tax-free later)
 - Living below means in the MFJ era if one spouse is significantly older or in poor health
 
-The engine models this in `contingency.ts` via `ContingencyReport`, which computes the survivor's spending capacity assuming the higher-earner's SS is preserved and the lower-earner's disappears. The dashboard shows a "coverage ratio" — the fraction of lifestyle spending that the survivor scenario supports.
+The engine models this in `contingency.ts` via `ContingencyReport`. The v2 analysis (2026-06-11): death is modeled in the year the deceased spouse reaches their life expectancy; the survivor inherits the **at-death portfolio** from that projection year (not the retirement-start balance); the survivor's need is **80% of couple spending** (fixed costs don't halve); and the survivor's federal tax is **recomputed under single brackets and the single standard deduction**, with IRMAA compressed to single thresholds for one person. The dashboard's coverage ratio is net of that single-filer tax — and the gap between single and MFJ-equivalent tax on the same income is reported as the annual widow's penalty in dollars. Planning-grade simplifications: realized gains are ignored (taxable basis steps up at death), the senior deduction is omitted, and accumulation-phase death is not simulated (a pre-retirement life expectancy uses the retirement-start portfolio).
 
 ---
 
