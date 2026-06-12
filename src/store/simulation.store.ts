@@ -52,7 +52,8 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
       profile.client.lifeExpectancy,
       profile.spouse?.fraMonthlyBenefit ?? null,
       profile.spouse?.fullRetirementAge ?? null,
-      profile.spouse?.lifeExpectancy ?? null
+      profile.spouse?.lifeExpectancy ?? null,
+      profile.ssBenefitHaircutPct ?? 0
     );
 
     const opportunities = assessOpportunities(profile, assets, retireNow.yearlyProjections);

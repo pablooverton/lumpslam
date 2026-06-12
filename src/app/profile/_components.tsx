@@ -211,7 +211,11 @@ export function PersonFields({
           />
           <p className="text-xs text-gray-500 mt-1">
             Your estimated monthly benefit if you claim exactly at your Full Retirement Age.{' '}
-            <span className="text-gray-600">Find this on your Social Security statement at ssa.gov/myaccount.</span>
+            <span className="text-gray-600">Find this on your Social Security statement at ssa.gov/myaccount.</span>{' '}
+            <span className="text-gray-600">
+              Retiring early? The statement assumes you keep earning until claim age — use ssa.gov&rsquo;s
+              detailed calculator with future earnings set to $0, or apply the SS haircut under Advanced Settings.
+            </span>
           </p>
         </Field>
 

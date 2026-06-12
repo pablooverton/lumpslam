@@ -371,7 +371,18 @@ Delaying from 62 to 70 means giving up 8 years × PIA in exchange for 24% higher
 - Immediate cash flow need (portfolio otherwise depletes)
 - Higher-earner spouse at FRA already claimed
 
-The engine implements this in `social-security.ts` via `calculateBenefitAtClaimAge()`. The simulation holds SS at the nominal claim-age amount without applying COLA during the projection — this is conservative (real purchasing power decays) and matches the reference advisor's base case.
+The engine implements this in `social-security.ts` via `calculateBenefitAtClaimAge()`. The simulation holds SS **flat in real dollars** — and because the engine is real-internal and actual benefits receive annual CPI COLAs, a flat-real benefit *is* a fully COLA'd benefit. This is the standard planning assumption, not a conservative one. (An earlier version of this section called it conservative; that text predated the real-internal refactor.)
+
+### PIA Inputs for Early Retirees
+
+`fraMonthlyBenefit` should be the PIA in today's dollars — but the estimate on an SSA statement **assumes you keep earning until claim age**. Stop working at 48 and the top-35-years earnings average fills with zeros, so the statement number overstates the actual benefit, often by 15–25% for a mid-career retiree. Two supported conventions:
+
+1. **Preferred:** generate the estimate with future earnings set to $0 (ssa.gov's detailed calculator supports this) and enter that as `fraMonthlyBenefit`.
+2. **Approximation:** enter the statement number and set `ssBenefitHaircutPct` to discount it.
+
+### The SS Haircut Field
+
+`ssBenefitHaircutPct` (0–1) scales every household benefit everywhere it appears: the projection loop, the spending-capacity heuristic, the claiming-age comparison, and the widow analysis. Use it for political risk — under current law the OASI trust fund is projected to deplete in the early 2030s, implying roughly 17–23% across-the-board cuts absent legislation — or as the PIA approximation above. Because the haircut applies to PIA, all claim-age options scale linearly: break-even ages are unchanged; what shrinks is the dollar gap math and the survivor income floor.
 
 ---
 

@@ -57,9 +57,15 @@ export function buildSocialSecurityComparison(
   spouseFraMonthlyBenefit: number | null,
   spouseFullRetirementAge: number | null,
   spouseLifeExpectancy: number | null,
+  benefitHaircutPct = 0,
   claimAgeRangeMin = 62,
   claimAgeRangeMax = 70
 ): SocialSecurityComparison {
+  // The haircut applies to PIA, so every claim-age option scales linearly — break-even ages
+  // are unchanged; lifetime PVs and the survivor floor shrink by the factor.
+  clientFraMonthlyBenefit *= 1 - benefitHaircutPct;
+  if (spouseFraMonthlyBenefit != null) spouseFraMonthlyBenefit *= 1 - benefitHaircutPct;
+
   const options: SocialSecurityOption[] = [];
 
   // Test representative claim ages

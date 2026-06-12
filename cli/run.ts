@@ -54,7 +54,10 @@ interface PersonInput {
   age: number;
   lifeExpectancy: number;
   fullRetirementAge: number;
-  /** Monthly SS benefit if claimed exactly at fullRetirementAge. Find at ssa.gov/myaccount */
+  /** Monthly SS benefit if claimed exactly at fullRetirementAge, in today's dollars.
+   *  Find at ssa.gov/myaccount — but note the statement estimate ASSUMES you keep earning
+   *  until claim age. For early retirement, generate the estimate with future earnings = $0
+   *  (ssa.gov detailed calculator), or discount the statement number via ssBenefitHaircutPct. */
   fraMonthlyBenefit: number;
   socialSecurityClaimAge: number;
 }
@@ -176,6 +179,11 @@ interface ProfileInput {
    *  = penalty-free from 55 (requires the plan to allow partial post-separation withdrawals).
    *  Roth draws always follow the IRS ordering rules regardless of this flag. */
   pre59PenaltyExemption?: 'none' | '72t' | 'rule_of_55';
+  /** Haircut (0–1) applied to ALL household SS benefits. 0.20 = benefits paid at 80%.
+   *  Use for political risk (trust-fund depletion implies ~17–23% cuts absent legislation)
+   *  or as a stand-in when fraMonthlyBenefit came from a statement that assumes continued
+   *  earnings. Default 0. */
+  ssBenefitHaircutPct?: number;
   /** Target federal bracket to fill via Roth conversion each year.
    *  Engine computes conversion = (bracketCeiling + stdDeduction) − RMD − SS_includable, all real.
    *  Automatically selects conversion_primary engine. Omit for surplus-driven conversions. */
@@ -270,6 +278,7 @@ function loadProfile(filePath: string): {
     annualGrowthRate: input.annualGrowthRate != null ? input.annualGrowthRate / 100 : undefined,
     retirementLocation: input.retirementLocation,
     pre59PenaltyExemption: input.pre59PenaltyExemption,
+    ssBenefitHaircutPct: input.ssBenefitHaircutPct,
     targetBracket: input.targetBracket,
     spendingEngine: input.spendingEngine,
     annualContributions,
@@ -435,6 +444,7 @@ Example:
       profile.spouse?.fraMonthlyBenefit ?? null,
       profile.spouse?.fullRetirementAge ?? null,
       profile.spouse?.lifeExpectancy ?? null,
+      profile.ssBenefitHaircutPct ?? 0,
     );
   }
 

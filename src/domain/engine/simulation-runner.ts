@@ -281,13 +281,19 @@ export function runSimulation(
     hsaBalance = coastState.hsaBalance;
   }
 
-  const clientSSMonthly = calculateBenefitAtClaimAge(
+  // Political-risk / PIA haircut: scales every household SS benefit — the projection loop,
+  // the capacity heuristic (via projectedAnnualSS), and the claiming comparison (via its own
+  // parameter). See FINANCIAL-PRINCIPLES §14 for the fraMonthlyBenefit input convention
+  // (statement PIA assumes continued earnings; early retirees should use a $0-future-earnings
+  // estimate or this haircut).
+  const ssHaircutFactor = 1 - (profile.ssBenefitHaircutPct ?? 0);
+  const clientSSMonthly = ssHaircutFactor * calculateBenefitAtClaimAge(
     profile.client.fraMonthlyBenefit,
     profile.client.fullRetirementAge,
     profile.client.socialSecurityClaimAge
   );
   const spouseSSMonthly = profile.spouse
-    ? calculateBenefitAtClaimAge(
+    ? ssHaircutFactor * calculateBenefitAtClaimAge(
         profile.spouse.fraMonthlyBenefit,
         profile.spouse.fullRetirementAge,
         profile.spouse.socialSecurityClaimAge
@@ -534,7 +540,7 @@ export function runSimulation(
     // Social Security income
     const ssClientMonthly =
       clientAge >= profile.client.socialSecurityClaimAge
-        ? calculateBenefitAtClaimAge(
+        ? ssHaircutFactor * calculateBenefitAtClaimAge(
             profile.client.fraMonthlyBenefit,
             profile.client.fullRetirementAge,
             profile.client.socialSecurityClaimAge
@@ -542,15 +548,15 @@ export function runSimulation(
         : 0;
     const ssSpouseMonthly =
       profile.spouse && spouseAge !== null && spouseAge >= profile.spouse.socialSecurityClaimAge
-        ? calculateBenefitAtClaimAge(
+        ? ssHaircutFactor * calculateBenefitAtClaimAge(
             profile.spouse.fraMonthlyBenefit,
             profile.spouse.fullRetirementAge,
             profile.spouse.socialSecurityClaimAge
           )
         : 0;
-    // SS kept at nominal claim-age amount (no automatic COLA applied).
-    // Conservative: real purchasing power of SS declines with inflation.
-    // Matches the reference video model and is appropriate for stress-testing.
+    // Real-internal engine: a benefit held flat in real dollars IS a fully CPI-COLA'd benefit
+    // (SS COLAs track CPI) — the standard planning assumption, not a conservative one.
+    // Benefit-cut / political risk is modeled via profile.ssBenefitHaircutPct instead.
     const ssClientAnnual = ssClientMonthly * 12;
     const ssSpouseAnnual = ssSpouseMonthly * 12;
     const totalSSAnnual = ssClientAnnual + ssSpouseAnnual;

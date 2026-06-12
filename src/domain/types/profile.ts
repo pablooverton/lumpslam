@@ -230,6 +230,15 @@ export interface ClientProfile {
    *  - 'rule_of_55': penalty-free from 55 (separation-year rule; requires the plan to allow
    *    partial post-separation withdrawals — verify with HR), 10% before 55. */
   pre59PenaltyExemption?: 'none' | '72t' | 'rule_of_55';
+  /** Optional haircut (0–1) applied multiplicatively to ALL household SS benefits, e.g. 0.20
+   *  = benefits paid at 80%. Two uses: (1) political risk — OASI trust-fund depletion (early
+   *  2030s under current law) implies ~17–23% across-the-board cuts absent legislation;
+   *  (2) PIA overstatement — an SSA-statement fraMonthlyBenefit assumes earnings continue to
+   *  claim age, which overstates the benefit for early retirees (the 35-year average fills
+   *  with zeros). Prefer entering an honest $0-future-earnings PIA and reserving this field
+   *  for political risk. Applied in the projection loop, the capacity heuristic, the claiming
+   *  comparison, and the widow analysis. Default 0. See FINANCIAL-PRINCIPLES §14. */
+  ssBenefitHaircutPct?: number;
   // Healthcare coverage strategy for the pre-Medicare bridge. 'standard' = COBRA → ACA → Medicare.
   // 'self_insure' = no traditional insurance pre-65 (e.g. CrowdHealth-style health-share, medical
   // tourism, true self-pay). Engine skips ACA cliff/IRMAA gymnastics for the pre-65 window and

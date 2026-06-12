@@ -31,6 +31,7 @@ export interface FormState {
   // Expert/advisor settings
   targetBracket?: '10%' | '12%' | '22%' | '24%' | '32%' | '35%';
   annualContributions: { pretax: number; roth: number; brokerage: number; hsa: number };
+  ssBenefitHaircutPct: number;  // 0–1; cut applied to all household SS benefits (political risk / statement-PIA discount)
 }
 
 export const BLANK_PERSON: PersonProfile = {
@@ -89,6 +90,7 @@ export function buildFormState(
     mortgageAnnualPayment: spending?.mortgageAnnualPayment ?? 0,
     mortgagePaidOffAge: spending?.mortgagePaidOffAge ?? 69,
     targetBracket: profile?.targetBracket,
+    ssBenefitHaircutPct: profile?.ssBenefitHaircutPct ?? 0,
     annualContributions: {
       pretax:    profile?.annualContributions?.pretax    ?? 0,
       roth:      profile?.annualContributions?.roth      ?? 0,

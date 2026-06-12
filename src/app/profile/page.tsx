@@ -222,6 +222,7 @@ export default function ProfilePage() {
       ...(isSelfInsure && { healthcareCoverage: 'self_insure' as const }),
       targetBracket: form.targetBracket,
       annualContributions: totalContribs > 0 ? form.annualContributions : undefined,
+      ...(form.ssBenefitHaircutPct > 0 && { ssBenefitHaircutPct: form.ssBenefitHaircutPct }),
     };
 
     const spendingProfile: SpendingProfile = {
@@ -769,7 +770,7 @@ export default function ProfilePage() {
         <details className="rounded-lg border border-gray-700 bg-gray-900 overflow-hidden">
           <summary className="px-4 py-3 bg-gray-800 text-sm font-semibold text-gray-400 cursor-pointer hover:text-white transition-colors list-none flex items-center justify-between select-none">
             <span>Advanced Settings</span>
-            <span className="text-xs font-normal">Market scenario, growth rate</span>
+            <span className="text-xs font-normal">Market scenario, growth rate, SS haircut</span>
           </summary>
           <div className="px-4 py-4 space-y-4">
             <div>
@@ -811,6 +812,26 @@ export default function ProfilePage() {
                   </span>
                 </p>
               </div>
+            </div>
+
+            <div>
+              <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-1">Social Security Haircut</p>
+              <div className="max-w-[160px] relative">
+                <NumericInput
+                  value={Math.round(form.ssBenefitHaircutPct * 100)}
+                  onChange={(v) => set('ssBenefitHaircutPct', Math.min(100, Math.max(0, v)) / 100)}
+                  min={0}
+                  max={100}
+                  className={inputClass + ' pr-7'}
+                />
+                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 text-sm pointer-events-none">%</span>
+              </div>
+              <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
+                Optional cut applied to every household SS benefit, everywhere it appears. Use it for political
+                risk (trust-fund depletion in the early 2030s implies ~17–23% cuts absent legislation), or as a
+                rough discount when your statement benefit assumes you keep working until claim age. 0% = benefits
+                as entered.
+              </p>
             </div>
 
             {workingYears > 0 && (
