@@ -68,6 +68,9 @@ export interface CoastPhase {
 export interface CoastPhasesValidationResult {
   valid: boolean;
   errors: string[];
+  /** Non-blocking: configuration the engine runs but partially ignores (e.g. one-time flows
+   *  dated inside a coast window). Surface to the user; don't fail the run. */
+  warnings: string[];
 }
 
 /** Validate that an array of CoastPhase is well-formed and consistent with the profile.
@@ -75,15 +78,22 @@ export interface CoastPhasesValidationResult {
 export function validateCoastPhases(
   phases: CoastPhase[] | undefined,
   currentYear: number,
-  retirementYearDesired: number | null
+  retirementYearDesired: number | null,
+  /** Optional: the profile's one-time flows. The coast engine reads no one-time flows, so a
+   *  flow dated inside a coast window silently disappears from the simulation — warned here. */
+  oneTimeFlows?: {
+    incomes?: Array<{ year: number; label?: string; amount: number }>;
+    expenses?: Array<{ year: number; label?: string; amount: number }>;
+  }
 ): CoastPhasesValidationResult {
   const errors: string[] = [];
+  const warnings: string[] = [];
   if (!phases || phases.length === 0) {
-    return { valid: true, errors: [] };
+    return { valid: true, errors: [], warnings: [] };
   }
   if (retirementYearDesired == null) {
     errors.push('coastPhases requires retirementYearDesired to be set on the profile.');
-    return { valid: false, errors };
+    return { valid: false, errors, warnings };
   }
 
   // Per-phase validation
@@ -144,7 +154,26 @@ export function validateCoastPhases(
     }
   }
 
-  return { valid: errors.length === 0, errors };
+  // One-time flows are read only by the retirement loop. A flow year inside a coast window
+  // disappears from the simulation entirely (e.g. a house sale during the coast) — warn.
+  const inCoast = (year: number) =>
+    phases.some((p) => year >= p.startYear && year <= p.endYear);
+  for (const f of oneTimeFlows?.incomes ?? []) {
+    if (inCoast(f.year)) {
+      warnings.push(
+        `One-time income${f.label ? ` "${f.label}"` : ''} ($${f.amount.toLocaleString()}, ${f.year}) falls inside a coast phase and is IGNORED by the coast engine — move it outside the coast window or fold it into phase income.`
+      );
+    }
+  }
+  for (const f of oneTimeFlows?.expenses ?? []) {
+    if (inCoast(f.year)) {
+      warnings.push(
+        `One-time expense${f.label ? ` "${f.label}"` : ''} ($${f.amount.toLocaleString()}, ${f.year}) falls inside a coast phase and is IGNORED by the coast engine — move it outside the coast window or fold it into baseAnnualSpending for those years.`
+      );
+    }
+  }
+
+  return { valid: errors.length === 0, errors, warnings };
 }
 
 export interface AnnualContributions {

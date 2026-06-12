@@ -73,12 +73,20 @@ export function runSimulation(
   // If profile.coastPhases is set, accumulation stops at the first coast phase start year
   // (rather than running all the way to retirementYear). Validation runs first to surface
   // configuration errors before any simulation work.
-  const coastValidation = validateCoastPhases(profile.coastPhases, profile.currentYear, profile.retirementYearDesired ?? null);
+  const coastValidation = validateCoastPhases(
+    profile.coastPhases,
+    profile.currentYear,
+    profile.retirementYearDesired ?? null,
+    { incomes: spending.oneTimeIncomes, expenses: spending.oneTimeExpenses }
+  );
   if (!coastValidation.valid) {
     throw new Error(
       `Invalid coastPhases configuration: ${coastValidation.errors.join('; ')}`
     );
   }
+  // Non-blocking issues (silently-dropped one-time flows, discarded savings cash) ride on the
+  // result instead of failing the run.
+  const simulationWarnings: string[] = [...coastValidation.warnings];
   const hasCoast = (profile.coastPhases?.length ?? 0) > 0;
   const firstCoastYear = hasCoast ? profile.coastPhases![0].startYear : null;
   const accumulationYears = firstCoastYear != null
@@ -401,7 +409,9 @@ export function runSimulation(
   // MAGI history lets us price this correctly: a big Roth conversion in year N triggers an IRMAA
   // increase in year N+2, not year N. Initialized empty — the first two Medicare years have no
   // lookback available and fall back to current-year MAGI.
-  const magiHistory: number[] = [];
+  // Seeded with coast-year MAGIs so the 2-year lookback prices correctly in the first two
+  // retirement years after a coast (previously fell back to current-year MAGI there).
+  const magiHistory: number[] = coastProjections.map((p) => p.magi);
   const getLookbackMagi = (currentMagi: number): number =>
     magiHistory.length >= 2 ? magiHistory[magiHistory.length - 2] : currentMagi;
 
@@ -1293,5 +1303,6 @@ export function runSimulation(
     lowerGuardrailSpendingCutDollars: capacityResult.lowerGuardrailSpendingCutDollars,
     yearlyProjections,
     lifetime,
+    ...(simulationWarnings.length > 0 && { warnings: simulationWarnings }),
   };
 }

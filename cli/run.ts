@@ -481,6 +481,11 @@ Example:
   const profileLine = `${profile.client.name}${profile.spouse ? ' & ' + profile.spouse.name : ''} | ${profile.stateOfResidence} | ${assets.totalLiquid.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })} liquid | retire ${profile.retirementYearDesired}`;
   console.log(`\n  \x1b[2mProfile: ${profileLine}\x1b[0m`);
 
+  // Non-blocking configuration warnings from the canonical (target-date) scenario.
+  for (const w of retireStated.warnings ?? []) {
+    console.log(`  \x1b[33m⚠ ${w}\x1b[0m`);
+  }
+
   switch (command) {
     case 'scenarios':
     default:

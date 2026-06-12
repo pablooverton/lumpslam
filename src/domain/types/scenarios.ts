@@ -30,6 +30,10 @@ export interface ScenarioResult {
   /** Lifetime aggregates used by the strategy-comparison harness.
    *  All amounts in current-year (profile.currentYear) real dollars. */
   lifetime: LifetimeAggregates;
+  /** Non-blocking configuration warnings: the run completed, but part of the modeling intent
+   *  was silently unrepresentable (one-time flows inside coast windows, discarded savings
+   *  cash flow). Surface these to the user. */
+  warnings?: string[];
 }
 
 export interface LifetimeAggregates {

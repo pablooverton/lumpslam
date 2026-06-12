@@ -3,7 +3,8 @@
 // A Coast phase is a year-window between accumulation and full retirement where the
 // household lives abroad and earns reduced income. During Coast:
 //   - Portfolio does not receive contributions (compounds untouched)
-//   - Coast income covers spending; deficit draws from brokerage (basis-aware), then Roth
+//   - Coast income covers spending (incl. the deflated nominal mortgage while unpaid);
+//     deficit draws from brokerage (basis-aware), then Roth
 //   - Optional Roth conversions add to MAGI and US federal tax
 //   - Foreign tax computed via foreign-tax framework with country-specific regime
 //   - US federal tax computed normally; Foreign Tax Credit offsets it
@@ -168,10 +169,13 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
   const stateTax = calculateStateTax(coastStateInfo, usOrdinaryIncome, profile.filingStatus);
 
   // ─── ACA net premium (US coast only) ─────────────────────────────────────
-  // On the marketplace during the coast. MAGI = salary + conversion (SS not started; brokerage-
-  // draw cap gains excluded — conservative for eligibility). Net premium follows the household-
-  // size phase-out + 400% FPL cliff. For US-coast profiles the base essential should EXCLUDE
-  // healthcare; the engine adds the size-aware ACA premium here.
+  // On the marketplace during the coast. The premium prices on salary + conversion only (SS
+  // not started). Gains realized by the shortfall brokerage draw are excluded — the draw isn't
+  // known until spending (which includes this premium) is set. That exclusion is OPTIMISTIC
+  // for eligibility/subsidy, not conservative; second-order at planning scale. The projection's
+  // reported MAGI does include realized gains. Net premium follows the household-size phase-out
+  // + 400% FPL cliff. For US-coast profiles the base essential should EXCLUDE healthcare; the
+  // engine adds the size-aware ACA premium here.
   const usCoastHouseholdSize = phase.acaHouseholdSize ?? profile.acaHouseholdSize ?? 2;
   const usCoastMagi = usOrdinaryIncome; // salary + conversion
   const acaNetPremium = isUsCoast ? netAcaPremium(usCoastMagi, usCoastHouseholdSize) : 0;
@@ -181,7 +185,16 @@ export function runCoastStep(inputs: CoastStepInputs): YearlyProjection {
   // ─── Spending and shortfall draws ───────────────────────────────────────
   // US coast adds the net ACA premium on top of base living (base essential should be ex-healthcare
   // for US-coast profiles). Foreign coast: acaNetPremium is 0 (healthcare handled by host regime).
-  const baseSpending = spending.baseAnnualSpending + acaNetPremium;
+  // Mortgage: fixed nominal P&I deflated to real — same convention as the retirement loop.
+  // Coasting households still make the payment (coast years previously skipped it).
+  const mortgagePayment =
+    (spending.mortgageAnnualPayment ?? 0) > 0 &&
+    spending.mortgagePaidOffAge !== undefined &&
+    clientAge <= spending.mortgagePaidOffAge
+      ? (spending.mortgageAnnualPayment ?? 0) /
+        Math.pow(1 + spending.inflationRate, year - profile.currentYear)
+      : 0;
+  const baseSpending = spending.baseAnnualSpending + acaNetPremium + mortgagePayment;
   const netIncomeAfterTax = phase.annualIncome + inheritedIraDistribution - totalTaxLiability;
   const spendingShortfall = baseSpending - netIncomeAfterTax;
 
