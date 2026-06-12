@@ -26,6 +26,7 @@ The tool is a **planning aid**, not financial advice. It is opinionated — it e
 16. [Inherited IRAs and the 10-Year Rule](#16-inherited-iras-and-the-10-year-rule)
 17. [Real vs. Nominal Dollars](#17-real-vs-nominal-dollars)
 18. [Probability of Success](#18-probability-of-success)
+19. [Known Limitations](#19-known-limitations)
 
 ---
 
@@ -68,7 +69,7 @@ A retirement is not a monolithic phase. It is four seasons, each with a differen
 | **COBRA** | 0–18 months | Former employer at group rate | None (part-W-2 year already over cliff) | Preserve brokerage for the ACA window |
 | **ACA** | Until age 65 | Marketplace with subsidies | $84,600 MFJ (400% FPL) | Manage MAGI under the cliff |
 | **Medicare** | 65 to SS claim (or RMD) | Parts A/B/D + Medigap | IRMAA tiers start at $212k MFJ | Roth conversion "golden window" |
-| **RMD** | 73+ (2026 rule) | Same as Medicare | Same IRMAA tiers | Drawdown sequencing, QCDs |
+| **RMD** | 73 or 75 (by birth year) | Same as Medicare | Same IRMAA tiers | Drawdown sequencing, QCDs |
 
 An **International** variant replaces ACA for households retiring abroad: no US marketplace, typically paying out-of-pocket or for local universal coverage. The engine treats it like an extended COBRA (unrestricted withdrawals, no MAGI cliff) but displays a distinct label to avoid confusing users.
 
@@ -123,6 +124,8 @@ MAGI = 0.85 × Social Security
      + Other Income (inherited IRA distributions, pensions, etc.)
 ```
 
+This is **tax MAGI** — the 85% SS factor is the income-tax inclusion cap, and the same value drives the IRMAA lookback. **ACA MAGI counts 100% of Social Security**: the engine adds the non-taxable 15% back for ACA eligibility and the cliff planner (the two diverge only in years with SS flowing before 65).
+
 **What is NOT in MAGI:**
 - Roth withdrawals (principal and earnings after 59½/5-year rule)
 - Return of basis on brokerage
@@ -165,7 +168,7 @@ The FPL numbers come from HHS poverty guidelines, updated annually.
 
 ## 7. IRMAA and the Two-Year Lookback
 
-**IRMAA** (Income-Related Monthly Adjustment Amount) is a surcharge on Medicare Part B and Part D premiums for higher-income enrollees. It is NOT tax — it is a direct premium increase — but functionally it behaves like a tax on MAGI above certain thresholds.
+**IRMAA** (Income-Related Monthly Adjustment Amount) is a surcharge on Medicare Part B and Part D premiums for higher-income enrollees. It is NOT tax — it is a direct premium increase — but functionally it behaves like a tax on MAGI above certain thresholds. Surcharges are charged **per person actually on Medicare**: a 60-year-old spouse of a 66-year-old enrollee is not surcharged. Single filers use the single thresholds (half the MFJ floors); the widow analysis applies them to the survivor.
 
 ### 2025 MFJ Thresholds
 
@@ -317,7 +320,7 @@ It is the kind of move that looks wrong on the surface ("why would I pay extra p
 
 ## 13. Required Minimum Distributions
 
-At age 73 (SECURE Act 2.0 rule, starting 2023), the IRS mandates annual withdrawals from pretax accounts based on the Uniform Lifetime Table. The RMD fraction starts at ~3.77% and grows each year as life expectancy shrinks.
+SECURE Act 2.0 sets the RMD start age by birth year — **73** for those born 1951–1959, **75** for 1960 and later; the engine derives it from `birthYear` (`getRmdStartAge`). From that age the IRS mandates annual withdrawals from pretax accounts based on the Uniform Lifetime Table. The RMD fraction starts at ~3.77% and grows each year as life expectancy shrinks (the table extends past 120 in the engine, so RMDs never silently stop for long-lived projections).
 
 ```
 RMD[year] = pretax_balance[year-end prior] / divisor[age]
@@ -489,6 +492,34 @@ Never above 85% when pre-SS depletion is present, never below 50%.
 The engine supports a Monte Carlo runner (`monte-carlo.ts`) that injects a per-year return sequence sampled from historical distributions. This produces a true distribution of outcomes rather than a single heuristic. It is slower and the output is harder to reason about — but for sophisticated users, it answers the "what's the worst case" question more rigorously than the historical heuristic.
 
 A 99% target is overly conservative for most households. The advisor consensus is **85–95% with guardrails** — high enough that statistical failure is unlikely, low enough that you aren't dying with a huge unused portfolio.
+
+---
+
+## 19. Known Limitations
+
+What the engine deliberately does **not** model, as of the 2026-06-11 full review (conservation fixes, tax-fidelity stack, and semantics pass all landed). When one of these matters for a specific decision, run it as an explicit sensitivity rather than trusting the default.
+
+### Tax
+
+- **State tax is planning-grade**: coarse progressive bracket steps for ten big states (CA NY NJ OR MN HI VT WI ME CT), flat top-marginal elsewhere; no state standard deductions or credits (leans conservative). NC's 4.5% is deliberately above the actual 3.99% → ~3% scheduled path.
+- **No AMT, QBI, credits (child tax credit, etc.), or itemized deductions** — the engine assumes the standard deduction throughout. For households with 4+ children under 17, the CTC alone can nearly zero federal tax on low-bracket conversion years; that upside is not priced.
+- The **senior deduction** (65+, 2025–2028) is applied in the projection tax math but omitted from conversion sizing and the widow recompute (a slight conservative under-fill).
+- **Foreign tax credit limits are approximated** during coast phases (FTC = min(foreign tax, US tax); real Form 1116 has per-category limits).
+- **Conversion-primary brokerage basis is a static ratio** — no per-lot tracking or basis recovery as withdrawals happen.
+
+### Benefits & healthcare
+
+- **PIA is an input, not computed** from an earnings record — see §14 for the early-retiree convention and the haircut field.
+- **ACA pricing is a household-size model** with the 400% FPL cliff: no per-state or metal-tier pricing, no cost-sharing reductions, and the kids-21–26 adult-rating lifecycle is not modeled. ACA legislative durability is the largest unmodeled policy risk for pre-65 retirements.
+- **Medicare premium inflation above CPI** is not modeled; IRMAA tiers and the ACA cliff are treated as real-sticky.
+
+### Modeling
+
+- **Monte Carlo draws are Normal** (clamped ±60%) and independent across years — no fat tails, autocorrelation, or valuation conditioning. True failure rates may be slightly higher than reported.
+- **Spending is deterministic**: no healthcare shocks, long-term care, or family contingencies. College only as explicit one-time expenses.
+- **One-time flows inside coast windows are unrepresentable** — the run warns and ignores them.
+- **Accumulation-phase death is not simulated**; the widow analysis substitutes the retirement-start portfolio when a life expectancy precedes retirement.
+- **Guardrails cut variable spending only** (essential + travel + charitable); mortgage, healthcare, taxes, and lumpy expenses are never cut.
 
 ---
 

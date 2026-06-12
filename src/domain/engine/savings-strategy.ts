@@ -172,6 +172,24 @@ function isActive(rule: AllocationRule, year: number): boolean {
 }
 
 /**
+ * Non-blocking warnings for a resolved strategy. The resolver discards free cash flow that
+ * no rule absorbs (`freeCashFlowRemaining`) — fine for deliberate comparisons, surprising in
+ * single-profile runs where the household would actually save the remainder. Warn when a
+ * material amount is dropped; a no-limit `brokerage` catch-all rule absorbs everything.
+ */
+export function getSavingsStrategyWarnings(
+  strategy: SavingsStrategy,
+  allocations: ResolvedYearAllocation[],
+): string[] {
+  const dropped = allocations.reduce((sum, a) => sum + a.freeCashFlowRemaining, 0);
+  if (dropped < 1) return [];
+  const years = allocations.filter((a) => a.freeCashFlowRemaining > 0.5).length;
+  return [
+    `Savings strategy "${strategy.name}": $${Math.round(dropped).toLocaleString()} of free cash flow across ${years} year${years === 1 ? '' : 's'} is not absorbed by any allocation rule and is DISCARDED (not invested). Add a no-limit 'brokerage' catch-all rule if the household would actually save it.`,
+  ];
+}
+
+/**
  * Aggregate totals across all resolved years — handy for reporting and
  * cross-strategy summary tables.
  */

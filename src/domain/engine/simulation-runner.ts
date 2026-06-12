@@ -11,7 +11,7 @@ import { calculateRMD, projectInheritedIraDistributions } from './rmd';
 import { calculateBenefitAtClaimAge } from './social-security';
 import { calculateLtcgTax, calculateNiit, calculateOrdinaryIncomeTax, getMarginalRate } from './tax-utils';
 import { calculateSpendingCapacity } from './spending-capacity';
-import { resolveSavingsStrategy, aggregateStrategyTotals, type ResolvedYearAllocation } from './savings-strategy';
+import { resolveSavingsStrategy, aggregateStrategyTotals, getSavingsStrategyWarnings, type ResolvedYearAllocation } from './savings-strategy';
 import { runCoastStep, type CoastStepState } from './coast';
 import { FEDERAL_INCOME_TAX_BRACKETS_2025, STANDARD_DEDUCTION_2025, calculateSeniorDeduction, getBracketCeiling } from '../constants/tax-brackets';
 import { getAcaCliff } from '../constants/aca-thresholds';
@@ -157,6 +157,9 @@ export function runSimulation(
       profile.savingsStrategy,
       profile.currentYear,
       accumulationYears,
+    );
+    simulationWarnings.push(
+      ...getSavingsStrategyWarnings(profile.savingsStrategy, resolvedAllocations)
     );
   }
 
